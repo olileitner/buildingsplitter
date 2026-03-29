@@ -1,0 +1,17 @@
+# Gradle
+.gradle/
+build/
+
+# Java/IDE build output
+out/
+*.class
+
+# IntelliJ IDEA
+.idea/
+*.iml
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*~
+

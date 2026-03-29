@@ -1,57 +1,57 @@
 # buildingsplitter
 
-JOSM-Plugin zum Aufteilen von Gebaeuden.
+JOSM plugin for splitting building ways.
 
-## Funktionen
+## Features
 
-- Manueller Modus: Gebaeude mit einer gezeichneten Linie teilen.
-- AutoSplit-Modus: rechteckige Gebaeude in mehrere Teile aufteilen.
-- Optionales Zuweisen von Hausnummern im AutoSplit-Dialog.
+- Manual mode: split a building by drawing a split line.
+- AutoSplit mode: split rectangular buildings into multiple parts.
+- Optional house number assignment in the AutoSplit dialog.
 
-## Voraussetzungen
+## Requirements
 
 - Java 11
 - Gradle Wrapper (`./gradlew`)
-- `libs/josm-tested.jar` im Projekt (wird als `compileOnly`/`testImplementation` genutzt)
+- `libs/josm-tested.jar` in the project (used as `compileOnly`/`testImplementation`)
 
-## Build und Test
+## Build and Test
 
 ```bash
 ./gradlew clean test
 ./gradlew jar
 ```
 
-## Lokales Deploy in JOSM
+## Local Deploy to JOSM
 
-Der Task `deployPlugin` kopiert das Plugin-JAR nach `~/.josm/plugins/` (unter Linux).
+The `deployPlugin` task copies the plugin JAR to `~/.josm/plugins/` (on Linux).
 
 ```bash
 ./gradlew deployPlugin
 ./gradlew -q printPluginInstallPath
 ```
 
-Weitere nuetzliche Tasks:
+Other useful tasks:
 
 ```bash
-./gradlew installPlugin   # Alias fuer deployPlugin
-./gradlew removePlugin    # entfernt das deployte Plugin-JAR
+./gradlew installPlugin   # Alias for deployPlugin
+./gradlew removePlugin    # Removes the deployed plugin JAR
 ```
 
 ## Git Remote (GitHub)
 
-Falls `origin` noch nicht gesetzt ist:
+If `origin` is not set yet:
 
 ```bash
 git remote add origin https://github.com/olileitner/buildingsplitter.git
 ```
 
-Falls `origin` bereits existiert und aktualisiert werden soll:
+If `origin` already exists and should be updated:
 
 ```bash
 git remote set-url origin https://github.com/olileitner/buildingsplitter.git
 ```
 
-Push mit Upstream:
+Push with upstream:
 
 ```bash
 git push -u origin "$(git branch --show-current)"
