@@ -1,7 +1,0 @@
-Manifest-Version: 1.0
-Plugin-Class: org.openstreetmap.josm.plugins.buildingsplitter.BuildingSp
- litterPlugin
-Plugin-Description: Split building ways into two parts
-Plugin-Version: 1.0
-Plugin-Mainversion: 19000
-

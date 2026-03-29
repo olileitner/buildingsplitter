@@ -37,6 +37,20 @@ Other useful tasks:
 ./gradlew removePlugin    # Removes the deployed plugin JAR
 ```
 
+## Submission Checklist (Review)
+
+- Build and tests pass locally (`./gradlew clean test jar`).
+- Plugin JAR is generated as `build/libs/buildingsplitter.jar`.
+- Required manifest fields are present (`Plugin-Class`, `Plugin-Version`, `Plugin-Mainversion`, `Plugin-Description`).
+- Recommended manifest fields are present (`Author`, `Plugin-Link`, `Plugin-Icon`, `Plugin-Minimum-Java-Version`).
+- Icons are packaged in the JAR under `images/`.
+
+Quick manifest check:
+
+```bash
+unzip -p build/libs/buildingsplitter.jar META-INF/MANIFEST.MF
+```
+
 ## Git Remote (GitHub)
 
 If `origin` is not set yet:
