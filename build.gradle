@@ -76,9 +76,13 @@ tasks.jar {
     manifest {
         attributes(
             'Plugin-Class': 'org.openstreetmap.josm.plugins.buildingsplitter.BuildingSplitterPlugin',
-            'Plugin-Description': 'Split building ways into two parts',
+            'Plugin-Description': 'Split building ways manually or with AutoSplit',
             'Plugin-Version': '1.0',
-            'Plugin-Mainversion': '19000'
+            'Plugin-Mainversion': '19000',
+            'Author': 'Oliver Leitner',
+            'Plugin-Link': 'https://github.com/olileitner/buildingsplitter',
+            'Plugin-Icon': 'images/buildingsplitter.svg',
+            'Plugin-Minimum-Java-Version': '11'
         )
     }
 }
