@@ -1,5 +1,7 @@
 package org.openstreetmap.josm.plugins.buildingsplitter;
 
+import static org.openstreetmap.josm.tools.I18n.tr;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -13,18 +15,18 @@ public class BuildingIntersectionService {
 
     public IntersectionResult findSplitIntersections(Way buildingWay, LatLon lineStart, LatLon lineEnd) {
         if (buildingWay == null) {
-            return IntersectionResult.failure("No building way provided");
+            return IntersectionResult.failure(tr("No building way provided"));
         }
         if (lineStart == null || lineEnd == null) {
-            return IntersectionResult.failure("Split line is not defined");
+            return IntersectionResult.failure(tr("Split line is not defined"));
         }
         if (!buildingWay.isClosed()) {
-            return IntersectionResult.failure("Building way must be closed");
+            return IntersectionResult.failure(tr("Building way must be closed"));
         }
 
         List<Node> ringNodes = getOpenRingNodes(buildingWay);
         if (ringNodes.size() < 3) {
-            return IntersectionResult.failure("Building outline is invalid");
+            return IntersectionResult.failure(tr("Building outline is invalid"));
         }
 
         List<IntersectionPoint> intersections = new ArrayList<>();
@@ -41,7 +43,7 @@ public class BuildingIntersectionService {
 
             SegmentIntersection segmentIntersection = intersectSegments(a, b, lineStart, lineEnd);
             if (segmentIntersection.type == IntersectionType.COLLINEAR_OVERLAP) {
-                return IntersectionResult.failure("Line overlaps building edge; not supported");
+                return IntersectionResult.failure(tr("Line overlaps building edge; not supported"));
             }
             if (segmentIntersection.type != IntersectionType.POINT) {
                 continue;
@@ -67,13 +69,13 @@ public class BuildingIntersectionService {
         intersections = deduplicateIntersections(intersections);
 
         if (intersections.size() == 0) {
-            return IntersectionResult.failure("Line does not intersect building");
+            return IntersectionResult.failure(tr("Line does not intersect building"));
         }
         if (intersections.size() == 1) {
-            return IntersectionResult.failure("Line touches building only once");
+            return IntersectionResult.failure(tr("Line touches building only once"));
         }
         if (intersections.size() > 2) {
-            return IntersectionResult.failure("Line intersects building multiple times; not supported");
+            return IntersectionResult.failure(tr("Line intersects building multiple times; not supported"));
         }
 
         return IntersectionResult.success(intersections);

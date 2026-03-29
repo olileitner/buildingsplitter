@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="org.openstreetmap.josm.plugins.buildingsplitter.BuildingSplitServiceTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-03-29T09:35:42.295Z" hostname="olis-machine" time="0.005">
+<testsuite name="org.openstreetmap.josm.plugins.buildingsplitter.BuildingSplitServiceTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-03-29T14:06:54.581Z" hostname="olis-machine" time="0.004">
   <properties/>
   <testcase name="validRectangularBuildingSplit()" classname="org.openstreetmap.josm.plugins.buildingsplitter.BuildingSplitServiceTest" time="0.001"/>
   <testcase name="openWayFails()" classname="org.openstreetmap.josm.plugins.buildingsplitter.BuildingSplitServiceTest" time="0.0"/>
-  <testcase name="safeTagsAreCopiedAndRiskyTagsAreNot()" classname="org.openstreetmap.josm.plugins.buildingsplitter.BuildingSplitServiceTest" time="0.001"/>
-  <testcase name="wrongNumberOfSelectedNodesOneFails()" classname="org.openstreetmap.josm.plugins.buildingsplitter.BuildingSplitServiceTest" time="0.0"/>
+  <testcase name="safeTagsAreCopiedAndRiskyTagsAreNot()" classname="org.openstreetmap.josm.plugins.buildingsplitter.BuildingSplitServiceTest" time="0.0"/>
+  <testcase name="wrongNumberOfSelectedNodesOneFails()" classname="org.openstreetmap.josm.plugins.buildingsplitter.BuildingSplitServiceTest" time="0.001"/>
   <testcase name="sameNodeSelectedTwiceFails()" classname="org.openstreetmap.josm.plugins.buildingsplitter.BuildingSplitServiceTest" time="0.0"/>
   <testcase name="selectedNodesNotOnBuildingFails()" classname="org.openstreetmap.josm.plugins.buildingsplitter.BuildingSplitServiceTest" time="0.0"/>
   <testcase name="wrongNumberOfSelectedNodesThreeFails()" classname="org.openstreetmap.josm.plugins.buildingsplitter.BuildingSplitServiceTest" time="0.0"/>
-  <testcase name="noBuildingTagFails()" classname="org.openstreetmap.josm.plugins.buildingsplitter.BuildingSplitServiceTest" time="0.001"/>
+  <testcase name="noBuildingTagFails()" classname="org.openstreetmap.josm.plugins.buildingsplitter.BuildingSplitServiceTest" time="0.0"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

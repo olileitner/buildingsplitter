@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- building body -->
+  <polygon points="3,7 8,3 13,7 13,13 3,13" fill="#dcdcdc" stroke="#555" stroke-width="1"/>
+  <!-- roof -->
+  <polygon points="2,7 8,2 14,7" fill="#888" stroke="#444" stroke-width="1"/>
+  <!-- split line -->
+  <line x1="4" y1="13" x2="12" y2="3" stroke="#ffffff" stroke-width="2"/>
+  <line x1="4" y1="13" x2="12" y2="3" stroke="#333" stroke-width="1" stroke-dasharray="2,2"/>
+</svg>

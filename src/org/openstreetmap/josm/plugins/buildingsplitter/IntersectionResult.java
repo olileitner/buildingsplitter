@@ -1,5 +1,7 @@
 package org.openstreetmap.josm.plugins.buildingsplitter;
 
+import static org.openstreetmap.josm.tools.I18n.tr;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -17,7 +19,7 @@ public final class IntersectionResult {
     }
 
     public static IntersectionResult success(List<IntersectionPoint> intersections) {
-        return new IntersectionResult(true, "Intersections computed", intersections);
+        return new IntersectionResult(true, tr("Intersections computed"), intersections);
     }
 
     public static IntersectionResult failure(String message) {

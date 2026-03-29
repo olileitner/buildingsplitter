@@ -30,6 +30,8 @@ public class AutoSplitBuildingService {
     }
 
     public SplitResult autoSplitBuilding(DataSet dataSet, Way buildingWay, int parts) {
+        final int undoStartSize = UndoRedoHandler.getInstance().getUndoCommands().size();
+
         if (dataSet == null) {
             return SplitResult.failure(tr("No editable dataset is available."));
         }
@@ -64,39 +66,62 @@ public class AutoSplitBuildingService {
             return SplitResult.failure(tr("Unable to compute internal split positions for AutoSplit."));
         }
 
-        List<Way> workingWays = new ArrayList<>();
-        workingWays.add(buildingWay);
+        try {
+            List<Way> workingWays = new ArrayList<>();
+            workingWays.add(buildingWay);
 
-        for (double splitPosition : splitPositions) {
-            Way targetWay = findTargetWayForSplitPosition(workingWays, geometry.mainAxis(), splitPosition);
-            if (targetWay == null) {
-                return SplitResult.failure(tr("Unable to resolve split position to exactly one building segment."));
+            for (double splitPosition : splitPositions) {
+                Way targetWay = findTargetWayForSplitPosition(workingWays, geometry.mainAxis(), splitPosition);
+                if (targetWay == null) {
+                    return rollbackAndFailure(
+                        undoStartSize,
+                        tr("Unable to resolve split position to exactly one building segment.")
+                    );
+                }
+
+                SplitResult splitResult = splitSingleWay(dataSet, targetWay, geometry, splitPosition);
+                if (!splitResult.isSuccess()) {
+                    return rollbackAndFailure(undoStartSize, splitResult.getMessage());
+                }
+
+                List<Way> createdWays = new ArrayList<>(splitResult.getCreatedWays());
+                if (createdWays.size() != 2) {
+                    return rollbackAndFailure(
+                        undoStartSize,
+                        tr("AutoSplit failed to create exactly two ways during iterative split.")
+                    );
+                }
+
+                workingWays.remove(targetWay);
+                workingWays.addAll(orderWaysByAxis(createdWays, geometry.mainAxis()));
+                workingWays = orderWaysByAxis(workingWays, geometry.mainAxis());
             }
 
-            SplitResult splitResult = splitSingleWay(dataSet, targetWay, geometry, splitPosition);
-            if (!splitResult.isSuccess()) {
-                return splitResult;
-            }
+            List<Way> orderedFinalWays = orderWaysByAxis(workingWays, geometry.mainAxis());
 
-            List<Way> createdWays = new ArrayList<>(splitResult.getCreatedWays());
-            if (createdWays.size() != 2) {
-                return SplitResult.failure(tr("AutoSplit failed to create exactly two ways during iterative split."));
-            }
+            SplitResult finalResult = SplitResult.success(
+                tr("AutoSplit completed: building split into {0} parts.", parts),
+                orderedFinalWays,
+                new SplitResult.SplitAxis(geometry.mainAxis().x(), geometry.mainAxis().y())
+            );
 
-            workingWays.remove(targetWay);
-            workingWays.addAll(orderWaysByAxis(createdWays, geometry.mainAxis()));
-            workingWays = orderWaysByAxis(workingWays, geometry.mainAxis());
+            return orthogonalizeCreatedWays(dataSet, finalResult);
+        } catch (RuntimeException ex) {
+            return rollbackAndFailure(undoStartSize, tr("AutoSplit failed unexpectedly. Changes were rolled back."));
         }
+    }
 
-        List<Way> orderedFinalWays = orderWaysByAxis(workingWays, geometry.mainAxis());
+    private SplitResult rollbackAndFailure(int undoStartSize, String message) {
+        rollbackCommandsAddedSince(undoStartSize);
+        return SplitResult.failure(message);
+    }
 
-        SplitResult finalResult = SplitResult.success(
-            tr("AutoSplit completed: building split into {0} parts.", parts),
-            orderedFinalWays,
-            new SplitResult.SplitAxis(geometry.mainAxis().x(), geometry.mainAxis().y())
-        );
-
-        return orthogonalizeCreatedWays(dataSet, finalResult);
+    private void rollbackCommandsAddedSince(int undoStartSize) {
+        int undoCount = UndoRedoHandler.getInstance().getUndoCommands().size() - undoStartSize;
+        if (undoCount > 0) {
+            // Roll back only commands created during this autoSplitBuilding call.
+            UndoRedoHandler.getInstance().undo(undoCount);
+        }
     }
 
     private SplitResult splitSingleWay(DataSet dataSet, Way targetWay, SplitGeometry geometry, double splitPosition) {
