@@ -1,0 +1,126 @@
+plugins {
+    id 'java'
+}
+
+import java.util.Locale
+
+group = 'org.openstreetmap.josm.plugins'
+version = '1.0'
+
+def pluginJarName = 'buildingsplitter.jar'
+
+// Resolve the local JOSM plugin directory by OS.
+// Linux:   ~/.josm/plugins/
+// macOS:   ~/Library/JOSM/plugins/
+// Windows: %APPDATA%/JOSM/plugins/
+def pluginInstallDirProvider = providers.provider {
+    String osName = System.getProperty('os.name', '').toLowerCase(Locale.ROOT)
+    String userHome = System.getProperty('user.home')
+    String appData = System.getenv('APPDATA')
+
+    if (osName.contains('win')) {
+        String windowsBase = appData ?: "${userHome}/AppData/Roaming"
+        return file("${windowsBase}/JOSM/plugins")
+    }
+    if (osName.contains('mac')) {
+        return file("${userHome}/Library/JOSM/plugins")
+    }
+    return file("${userHome}/.josm/plugins")
+}
+
+def deployedPluginJarProvider = pluginInstallDirProvider.map { installDir ->
+    new File(installDir, pluginJarName)
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
+}
+
+sourceSets {
+    main {
+        java {
+            srcDirs = ['src']
+        }
+    }
+    test {
+        java {
+            srcDirs = ['test']
+        }
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Place josm-tested.jar in libs/ (for example: libs/josm-tested.jar)
+    compileOnly files("$rootDir/libs/josm-tested.jar")
+    testImplementation files("$rootDir/libs/josm-tested.jar")
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+}
+
+tasks.jar {
+    archiveFileName = pluginJarName
+
+    manifest {
+        attributes(
+            'Plugin-Class': 'org.openstreetmap.josm.plugins.buildingsplitter.BuildingSplitterPlugin',
+            'Plugin-Description': 'Split building ways into two parts',
+            'Plugin-Version': '1.0',
+            'Plugin-Mainversion': '19000'
+        )
+    }
+}
+
+// Build and copy the plugin jar into the resolved local JOSM plugins directory.
+tasks.register('deployPlugin', Copy) {
+    dependsOn tasks.jar
+
+    from(tasks.named('jar').flatMap { it.archiveFile })
+    into(pluginInstallDirProvider)
+    rename { pluginJarName }
+
+    doFirst {
+        pluginInstallDirProvider.get().mkdirs()
+    }
+}
+
+// Backward-compatible alias for existing local workflow.
+tasks.register('installPlugin') {
+    dependsOn tasks.named('deployPlugin')
+}
+
+// Remove deployed plugin jar from the resolved local JOSM plugins directory.
+tasks.register('removePlugin', Delete) {
+    delete(deployedPluginJarProvider)
+}
+
+// Print the resolved plugin installation path for the current OS.
+tasks.register('printPluginInstallPath') {
+    doLast {
+        println deployedPluginJarProvider.get().absolutePath
+    }
+}
+
+// Optional: start JOSM for debugging when libs/josm-tested.jar is available.
+tasks.register('runJosmDebug', JavaExec) {
+    group = 'application'
+    description = 'Launch JOSM for plugin debugging if libs/josm-tested.jar exists.'
+
+    def josmJar = file("$rootDir/libs/josm-tested.jar")
+    classpath = files(josmJar)
+    mainClass = 'org.openstreetmap.josm.gui.MainApplication'
+    onlyIf { josmJar.exists() }
+
+    // Windows path example:
+    // %APPDATA%\\JOSM\\plugins\\
+}
+
