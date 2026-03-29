@@ -17,13 +17,16 @@ import org.openstreetmap.josm.data.osm.Way;
 
 public class AutoSplitPreviewSession {
 
+    private static final String PREVIEW_RESET_MESSAGE =
+        tr("AutoSplit preview was reset because other edits were made in the meantime.");
+
     private final DataSet dataSet;
     private final Way sourceWay;
     private final AutoSplitBuildingService autoSplitService;
     private final HouseNumberService houseNumberService;
     private final UndoRedoHandler undoRedoHandler;
 
-    private final int baselineUndoSize;
+    private final List<Command> previewOwnedCommands;
 
     private SplitResult currentPreviewResult;
     private AppliedOptions currentAppliedOptions;
@@ -39,7 +42,7 @@ public class AutoSplitPreviewSession {
         this.autoSplitService = autoSplitService;
         this.houseNumberService = houseNumberService;
         this.undoRedoHandler = UndoRedoHandler.getInstance();
-        this.baselineUndoSize = undoRedoHandler.getUndoCommands().size();
+        this.previewOwnedCommands = new ArrayList<>();
     }
 
     public String refreshPreview(
@@ -49,22 +52,30 @@ public class AutoSplitPreviewSession {
         boolean reverseOrder,
         boolean firstWithoutLetter
     ) {
-        undoPreview();
+        if (!undoPreviewOwnedCommands()) {
+            return PREVIEW_RESET_MESSAGE;
+        }
+        clearPreviewState();
 
         if (parts == null) {
             return null;
         }
 
+        int refreshStartUndoSize = undoRedoHandler.getUndoCommands().size();
+
         SplitResult splitResult = autoSplitService.autoSplitBuilding(dataSet, sourceWay, parts);
         if (!splitResult.isSuccess()) {
+            rollbackRefreshAttempt(refreshStartUndoSize);
             return splitResult.getMessage();
         }
+
+        captureCommandsAddedSince(refreshStartUndoSize);
 
         String normalizedStart = normalizeStartValue(startHouseNumber);
         if (!normalizedStart.isEmpty()) {
             List<Way> createdWays = orderWaysBySplitAxis(splitResult, reverseOrder);
             if (createdWays == null) {
-                undoPreview();
+                rollbackRefreshAttempt(refreshStartUndoSize);
                 return tr("Failed to determine AutoSplit axis ordering for house numbers.");
             }
             List<String> houseNumbers;
@@ -76,7 +87,7 @@ public class AutoSplitPreviewSession {
                     firstWithoutLetter
                 );
             } catch (IllegalArgumentException ex) {
-                undoPreview();
+                rollbackRefreshAttempt(refreshStartUndoSize);
                 return ex.getMessage();
             }
 
@@ -85,7 +96,9 @@ public class AutoSplitPreviewSession {
                 commands.add(new ChangePropertyCommand(createdWays.get(i), "addr:housenumber", houseNumbers.get(i)));
             }
             if (!commands.isEmpty()) {
+                int beforeAssignmentUndoSize = undoRedoHandler.getUndoCommands().size();
                 undoRedoHandler.add(new SequenceCommand(tr("Assign house numbers"), commands));
+                captureCommandsAddedSince(beforeAssignmentUndoSize);
             }
         }
 
@@ -95,13 +108,8 @@ public class AutoSplitPreviewSession {
     }
 
     public void undoPreview() {
-        int currentSize = undoRedoHandler.getUndoCommands().size();
-        int toUndo = currentSize - baselineUndoSize;
-        if (toUndo > 0) {
-            undoRedoHandler.undo(toUndo);
-        }
-        currentPreviewResult = null;
-        currentAppliedOptions = null;
+        undoPreviewOwnedCommands();
+        clearPreviewState();
     }
 
     public SplitResult finalizePreview(AutoSplitDialogResult dialogResult) {
@@ -144,6 +152,72 @@ public class AutoSplitPreviewSession {
 
     private String normalizeStartValue(String startHouseNumber) {
         return startHouseNumber == null ? "" : startHouseNumber.trim();
+    }
+
+    private void rollbackRefreshAttempt(int refreshStartUndoSize) {
+        int undoCount = undoRedoHandler.getUndoCommands().size() - refreshStartUndoSize;
+        if (undoCount > 0) {
+            undoRedoHandler.undo(undoCount);
+            removeLastOwnedCommands(undoCount);
+        }
+        clearPreviewState();
+    }
+
+    private void captureCommandsAddedSince(int previousUndoSize) {
+        List<Command> undoCommands = undoRedoHandler.getUndoCommands();
+        for (int i = previousUndoSize; i < undoCommands.size(); i++) {
+            previewOwnedCommands.add(undoCommands.get(i));
+        }
+    }
+
+    private boolean undoPreviewOwnedCommands() {
+        if (previewOwnedCommands.isEmpty()) {
+            return true;
+        }
+
+        int contiguousOwnedOnTop = countContiguousOwnedCommandsOnTop();
+        if (contiguousOwnedOnTop != previewOwnedCommands.size()) {
+            resetPreviewSessionState();
+            return false;
+        }
+
+        undoRedoHandler.undo(contiguousOwnedOnTop);
+        removeLastOwnedCommands(contiguousOwnedOnTop);
+        return true;
+    }
+
+    private int countContiguousOwnedCommandsOnTop() {
+        List<Command> undoCommands = undoRedoHandler.getUndoCommands();
+        int undoIndex = undoCommands.size() - 1;
+        int ownedIndex = previewOwnedCommands.size() - 1;
+        int count = 0;
+
+        while (undoIndex >= 0 && ownedIndex >= 0) {
+            if (undoCommands.get(undoIndex) != previewOwnedCommands.get(ownedIndex)) {
+                break;
+            }
+            count++;
+            undoIndex--;
+            ownedIndex--;
+        }
+
+        return count;
+    }
+
+    private void removeLastOwnedCommands(int count) {
+        for (int i = 0; i < count && !previewOwnedCommands.isEmpty(); i++) {
+            previewOwnedCommands.remove(previewOwnedCommands.size() - 1);
+        }
+    }
+
+    private void clearPreviewState() {
+        currentPreviewResult = null;
+        currentAppliedOptions = null;
+    }
+
+    private void resetPreviewSessionState() {
+        previewOwnedCommands.clear();
+        clearPreviewState();
     }
 
     private List<Way> orderWaysBySplitAxis(SplitResult splitResult, boolean reverseOrder) {
