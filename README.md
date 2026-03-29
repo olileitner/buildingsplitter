@@ -51,6 +51,17 @@ Quick manifest check:
 unzip -p build/libs/buildingsplitter.jar META-INF/MANIFEST.MF
 ```
 
+## Release Artifact URL (for Submission)
+
+When submitting the plugin for review/distribution, provide a direct public `.jar` download URL
+from a GitHub Release asset (not just the repository or releases overview page).
+
+Expected pattern:
+
+```text
+https://github.com/<user>/<repo>/releases/download/<tag>/buildingsplitter.jar
+```
+
 ## Git Remote (GitHub)
 
 If `origin` is not set yet:

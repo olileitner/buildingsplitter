@@ -29,6 +29,7 @@ import org.openstreetmap.josm.gui.MainApplication;
 import org.openstreetmap.josm.gui.MapView;
 import org.openstreetmap.josm.gui.layer.MapViewPaintable;
 import org.openstreetmap.josm.tools.ImageProvider;
+import org.openstreetmap.josm.tools.Logging;
 import org.openstreetmap.josm.tools.Shortcut;
 
 public class SplitBuildingMapMode extends MapMode {
@@ -235,7 +236,7 @@ public class SplitBuildingMapMode extends MapMode {
         }
 
         dataSet.setSelected(createdWays);
-        System.out.println("SplitBuildingMapMode: " + splitResult.getMessage());
+        Logging.info("SplitBuildingMapMode: " + splitResult.getMessage());
     }
 
     private SplitCandidate findUniqueSplitCandidate(DataSet dataSet, LatLon start, LatLon end) {

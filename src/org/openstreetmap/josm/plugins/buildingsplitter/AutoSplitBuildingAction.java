@@ -17,6 +17,7 @@ import org.openstreetmap.josm.data.osm.Node;
 import org.openstreetmap.josm.data.osm.Way;
 import org.openstreetmap.josm.gui.MainApplication;
 import org.openstreetmap.josm.tools.ImageProvider;
+import org.openstreetmap.josm.tools.Logging;
 import org.openstreetmap.josm.tools.Shortcut;
 
 public class AutoSplitBuildingAction extends JosmAction {
@@ -114,7 +115,7 @@ public class AutoSplitBuildingAction extends JosmAction {
                 continue;
             }
 
-            System.out.println("AutoSplitBuildingAction: " + result.getMessage());
+            Logging.info("AutoSplitBuildingAction: " + result.getMessage());
             if (!result.getCreatedWays().isEmpty()) {
                 lastSuccessfulCreatedWays = new ArrayList<>(result.getCreatedWays());
             }

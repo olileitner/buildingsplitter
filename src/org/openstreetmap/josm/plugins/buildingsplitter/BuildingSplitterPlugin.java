@@ -1,10 +1,5 @@
 package org.openstreetmap.josm.plugins.buildingsplitter;
 
-import java.awt.Component;
-
-import javax.swing.AbstractButton;
-import javax.swing.JButton;
-
 import org.openstreetmap.josm.gui.MainApplication;
 import org.openstreetmap.josm.gui.IconToggleButton;
 import org.openstreetmap.josm.gui.MapFrame;
@@ -67,25 +62,6 @@ public class BuildingSplitterPlugin extends Plugin {
         if (!alreadyPresent) {
             MainApplication.getToolbar().addCustomButton(toolbarId, -1, false);
             MainApplication.getToolbar().refreshToolbarControl();
-        }
-
-        boolean visibleButtonPresent = false;
-        for (Component component : MainApplication.getToolbar().control.getComponents()) {
-            if (component instanceof AbstractButton) {
-                AbstractButton button = (AbstractButton) component;
-                if (button.getAction() == autoSplitBuildingAction) {
-                    visibleButtonPresent = true;
-                    break;
-                }
-            }
-        }
-
-        if (!visibleButtonPresent) {
-            JButton button = new JButton(autoSplitBuildingAction);
-            button.setFocusable(false);
-            MainApplication.getToolbar().control.add(button);
-            MainApplication.getToolbar().control.revalidate();
-            MainApplication.getToolbar().control.repaint();
         }
     }
 }
