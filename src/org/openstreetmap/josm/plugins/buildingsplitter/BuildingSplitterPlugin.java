@@ -1,8 +1,14 @@
 package org.openstreetmap.josm.plugins.buildingsplitter;
 
+import java.awt.Component;
+
+import javax.swing.AbstractButton;
+import javax.swing.JButton;
+
 import org.openstreetmap.josm.gui.MainApplication;
 import org.openstreetmap.josm.gui.IconToggleButton;
 import org.openstreetmap.josm.gui.MapFrame;
+import org.openstreetmap.josm.gui.preferences.ToolbarPreferences;
 import org.openstreetmap.josm.plugins.Plugin;
 import org.openstreetmap.josm.plugins.PluginInformation;
 
@@ -18,6 +24,7 @@ public class BuildingSplitterPlugin extends Plugin {
         autoSplitBuildingAction = new AutoSplitBuildingAction();
         MainApplication.getMenu().toolsMenu.add(splitBuildingAction);
         MainApplication.getMenu().toolsMenu.add(autoSplitBuildingAction);
+        ensureAutoSplitToolbarButton();
 
         MainApplication.addMapFrameListener(this);
         MapFrame currentMap = MainApplication.getMap();
@@ -35,11 +42,50 @@ public class BuildingSplitterPlugin extends Plugin {
             return;
         }
 
+        // UI components can be initialized after plugin construction.
+        // Re-run toolbar wiring here to ensure the AutoSplit button appears.
+        ensureAutoSplitToolbarButton();
+
         if (newFrame == registeredMapFrame) {
             return;
         }
 
         newFrame.addMapMode(new IconToggleButton(new SplitBuildingMapMode()));
         registeredMapFrame = newFrame;
+    }
+
+    private void ensureAutoSplitToolbarButton() {
+        if (MainApplication.getToolbar() == null) {
+            return;
+        }
+
+        Object toolbarValue = autoSplitBuildingAction.getValue("toolbar");
+        String toolbarId = toolbarValue instanceof String ? (String) toolbarValue : "buildingsplitter_auto";
+        boolean alreadyPresent = ToolbarPreferences.getToolString().stream()
+            .anyMatch(entry -> entry != null && entry.startsWith(toolbarId));
+
+        if (!alreadyPresent) {
+            MainApplication.getToolbar().addCustomButton(toolbarId, -1, false);
+            MainApplication.getToolbar().refreshToolbarControl();
+        }
+
+        boolean visibleButtonPresent = false;
+        for (Component component : MainApplication.getToolbar().control.getComponents()) {
+            if (component instanceof AbstractButton) {
+                AbstractButton button = (AbstractButton) component;
+                if (button.getAction() == autoSplitBuildingAction) {
+                    visibleButtonPresent = true;
+                    break;
+                }
+            }
+        }
+
+        if (!visibleButtonPresent) {
+            JButton button = new JButton(autoSplitBuildingAction);
+            button.setFocusable(false);
+            MainApplication.getToolbar().control.add(button);
+            MainApplication.getToolbar().control.revalidate();
+            MainApplication.getToolbar().control.repaint();
+        }
     }
 }
