@@ -9,6 +9,7 @@ import javax.swing.JOptionPane;
 import org.openstreetmap.josm.actions.JosmAction;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.gui.MainApplication;
+import org.openstreetmap.josm.tools.ImageProvider;
 import org.openstreetmap.josm.tools.Shortcut;
 
 public class SplitBuildingAction extends JosmAction {
@@ -16,7 +17,7 @@ public class SplitBuildingAction extends JosmAction {
     public SplitBuildingAction() {
         super(
             tr("Split Building"),
-            null,
+            "buildingsplitter",
             tr("Draw a split line across a building"),
             Shortcut.registerShortcut(
                 "tools:buildingsplitter:splitbuilding",
@@ -26,6 +27,8 @@ public class SplitBuildingAction extends JosmAction {
             ),
             false
         );
+        putValue(SMALL_ICON, ImageProvider.get("buildingsplitter"));
+        putValue(LARGE_ICON_KEY, ImageProvider.get("buildingsplitter"));
     }
 
     @Override

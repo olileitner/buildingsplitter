@@ -6,6 +6,8 @@ import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Cursor;
 import java.awt.Graphics2D;
+import java.awt.KeyEventDispatcher;
+import java.awt.KeyboardFocusManager;
 import java.awt.Point;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
@@ -26,6 +28,7 @@ import org.openstreetmap.josm.data.osm.Way;
 import org.openstreetmap.josm.gui.MainApplication;
 import org.openstreetmap.josm.gui.MapView;
 import org.openstreetmap.josm.gui.layer.MapViewPaintable;
+import org.openstreetmap.josm.tools.ImageProvider;
 import org.openstreetmap.josm.tools.Shortcut;
 
 public class SplitBuildingMapMode extends MapMode {
@@ -45,11 +48,12 @@ public class SplitBuildingMapMode extends MapMode {
 
     private LatLon dragStart;
     private LatLon dragCurrent;
+    private KeyEventDispatcher escKeyDispatcher;
 
     public SplitBuildingMapMode() {
         super(
             tr("Split Building"),
-            "splitway",
+            "buildingsplitter",
             tr("Drag a line across a building to split it"),
             SPLIT_BUILDING_SHORTCUT,
             Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR)
@@ -58,11 +62,14 @@ public class SplitBuildingMapMode extends MapMode {
         this.intersectionService = new BuildingIntersectionService();
         this.splitNodePreparationService = new SplitNodePreparationService();
         this.previewLinePaintable = new PreviewLinePaintable();
+        putValue(SMALL_ICON, ImageProvider.get("mapmode", "buildingsplitter"));
+        putValue(LARGE_ICON_KEY, ImageProvider.get("mapmode", "buildingsplitter"));
     }
 
     @Override
     public void enterMode() {
         super.enterMode();
+        registerEscapeHandler();
         if (MainApplication.getMap() != null && MainApplication.getMap().mapView != null) {
             MainApplication.getMap().mapView.addMouseListener(this);
             MainApplication.getMap().mapView.addMouseMotionListener(this);
@@ -72,6 +79,7 @@ public class SplitBuildingMapMode extends MapMode {
 
     @Override
     public void exitMode() {
+        unregisterEscapeHandler();
         if (MainApplication.getMap() != null && MainApplication.getMap().mapView != null) {
             MainApplication.getMap().mapView.removeMouseListener(this);
             MainApplication.getMap().mapView.removeMouseMotionListener(this);
@@ -275,6 +283,48 @@ public class SplitBuildingMapMode extends MapMode {
     private void repaintMapView() {
         if (MainApplication.getMap() != null && MainApplication.getMap().mapView != null) {
             MainApplication.getMap().mapView.repaint();
+        }
+    }
+
+    private void registerEscapeHandler() {
+        if (escKeyDispatcher != null) {
+            return;
+        }
+
+        escKeyDispatcher = event -> {
+            if (event.getID() != KeyEvent.KEY_PRESSED || event.getKeyCode() != KeyEvent.VK_ESCAPE) {
+                return false;
+            }
+
+            if (!isActiveMapMode()) {
+                return false;
+            }
+
+            handleEscapePressed();
+            return true;
+        };
+
+        KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(escKeyDispatcher);
+    }
+
+    private void unregisterEscapeHandler() {
+        if (escKeyDispatcher == null) {
+            return;
+        }
+
+        KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(escKeyDispatcher);
+        escKeyDispatcher = null;
+    }
+
+    private boolean isActiveMapMode() {
+        return MainApplication.getMap() != null && MainApplication.getMap().mapMode == this;
+    }
+
+    private void handleEscapePressed() {
+        resetState();
+        repaintMapView();
+        if (MainApplication.getMap() != null) {
+            MainApplication.getMap().selectSelectTool(false);
         }
     }
 

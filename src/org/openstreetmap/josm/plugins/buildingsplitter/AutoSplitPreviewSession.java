@@ -3,6 +3,7 @@ package org.openstreetmap.josm.plugins.buildingsplitter;
 import static org.openstreetmap.josm.tools.I18n.tr;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
@@ -41,7 +42,13 @@ public class AutoSplitPreviewSession {
         this.baselineUndoSize = undoRedoHandler.getUndoCommands().size();
     }
 
-    public String refreshPreview(Integer parts, String startHouseNumber, int increment) {
+    public String refreshPreview(
+        Integer parts,
+        String startHouseNumber,
+        int increment,
+        boolean reverseOrder,
+        boolean firstWithoutLetter
+    ) {
         undoPreview();
 
         if (parts == null) {
@@ -55,14 +62,19 @@ public class AutoSplitPreviewSession {
 
         String normalizedStart = normalizeStartValue(startHouseNumber);
         if (!normalizedStart.isEmpty()) {
-            List<Way> createdWays = orderWaysBySplitAxis(splitResult);
+            List<Way> createdWays = orderWaysBySplitAxis(splitResult, reverseOrder);
             if (createdWays == null) {
                 undoPreview();
                 return tr("Failed to determine AutoSplit axis ordering for house numbers.");
             }
             List<String> houseNumbers;
             try {
-                houseNumbers = houseNumberService.generateSequence(normalizedStart, increment, createdWays.size());
+                houseNumbers = houseNumberService.generateSequence(
+                    normalizedStart,
+                    increment,
+                    createdWays.size(),
+                    firstWithoutLetter
+                );
             } catch (IllegalArgumentException ex) {
                 undoPreview();
                 return ex.getMessage();
@@ -78,7 +90,7 @@ public class AutoSplitPreviewSession {
         }
 
         currentPreviewResult = splitResult;
-        currentAppliedOptions = new AppliedOptions(parts, normalizedStart, increment);
+        currentAppliedOptions = new AppliedOptions(parts, normalizedStart, increment, reverseOrder, firstWithoutLetter);
         return null;
     }
 
@@ -98,7 +110,13 @@ public class AutoSplitPreviewSession {
         }
 
         if (!matchesCurrent(dialogResult)) {
-            String previewError = refreshPreview(dialogResult.getParts(), dialogResult.getStartHouseNumber(), dialogResult.getIncrement());
+            String previewError = refreshPreview(
+                dialogResult.getParts(),
+                dialogResult.getStartHouseNumber(),
+                dialogResult.getIncrement(),
+                dialogResult.isReverseOrder(),
+                dialogResult.isFirstWithoutLetter()
+            );
             if (previewError != null) {
                 return SplitResult.failure(previewError);
             }
@@ -119,6 +137,8 @@ public class AutoSplitPreviewSession {
         String normalizedStart = normalizeStartValue(dialogResult.getStartHouseNumber());
         return currentAppliedOptions.parts == dialogResult.getParts()
             && currentAppliedOptions.increment == dialogResult.getIncrement()
+            && currentAppliedOptions.reverseOrder == dialogResult.isReverseOrder()
+            && currentAppliedOptions.firstWithoutLetter == dialogResult.isFirstWithoutLetter()
             && currentAppliedOptions.startHouseNumber.equals(normalizedStart);
     }
 
@@ -126,7 +146,7 @@ public class AutoSplitPreviewSession {
         return startHouseNumber == null ? "" : startHouseNumber.trim();
     }
 
-    private List<Way> orderWaysBySplitAxis(SplitResult splitResult) {
+    private List<Way> orderWaysBySplitAxis(SplitResult splitResult, boolean reverseOrder) {
         if (splitResult == null || !splitResult.hasSplitAxis()) {
             return null;
         }
@@ -136,6 +156,9 @@ public class AutoSplitPreviewSession {
         ordered.sort(Comparator
             .comparingDouble((Way way) -> projectCenterOnAxis(way, axis))
             .thenComparingLong(Way::getUniqueId));
+        if (reverseOrder) {
+            Collections.reverse(ordered);
+        }
         return ordered;
     }
 
@@ -170,11 +193,21 @@ public class AutoSplitPreviewSession {
         private final int parts;
         private final String startHouseNumber;
         private final int increment;
+        private final boolean reverseOrder;
+        private final boolean firstWithoutLetter;
 
-        private AppliedOptions(int parts, String startHouseNumber, int increment) {
+        private AppliedOptions(
+            int parts,
+            String startHouseNumber,
+            int increment,
+            boolean reverseOrder,
+            boolean firstWithoutLetter
+        ) {
             this.parts = parts;
             this.startHouseNumber = startHouseNumber;
             this.increment = increment;
+            this.reverseOrder = reverseOrder;
+            this.firstWithoutLetter = firstWithoutLetter;
         }
     }
 }

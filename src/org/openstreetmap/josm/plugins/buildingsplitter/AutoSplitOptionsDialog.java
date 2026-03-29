@@ -5,22 +5,25 @@ import static org.openstreetmap.josm.tools.I18n.tr;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Frame;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
-import java.util.List;
+import java.awt.event.KeyEvent;
 
 import javax.swing.BorderFactory;
+import javax.swing.ButtonGroup;
 import javax.swing.JButton;
+import javax.swing.JComponent;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
-import javax.swing.JScrollPane;
-import javax.swing.JTextArea;
 import javax.swing.JTextField;
+import javax.swing.JToggleButton;
+import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
@@ -29,7 +32,13 @@ public class AutoSplitOptionsDialog {
 
     @FunctionalInterface
     public interface PreviewChangeListener {
-        String onPreviewChanged(Integer parts, String startHouseNumber, int increment);
+        String onPreviewChanged(
+            Integer parts,
+            String startHouseNumber,
+            int increment,
+            boolean reverseOrder,
+            boolean firstWithoutLetter
+        );
     }
 
     private final HouseNumberService houseNumberService;
@@ -42,81 +51,65 @@ public class AutoSplitOptionsDialog {
         Component parent,
         int defaultParts,
         int defaultIncrement,
+        boolean defaultReverseOrder,
+        boolean defaultFirstWithoutLetter,
         String defaultStartHouseNumber,
         PreviewChangeListener previewChangeListener
     ) {
         Frame owner = JOptionPane.getFrameForComponent(parent);
         JDialog dialog = new JDialog(owner, tr("AutoSplit Building"), true);
 
-        JTextField partsField = new JTextField(Integer.toString(Math.max(2, defaultParts)), 8);
-        JTextField houseNumberField = new JTextField(defaultStartHouseNumber == null ? "" : defaultStartHouseNumber, 12);
+        JTextField houseNumberField = new JTextField(defaultStartHouseNumber == null ? "" : defaultStartHouseNumber, 16);
         JLabel incrementValueLabel = new JLabel();
         JLabel validationLabel = new JLabel(" ");
         validationLabel.setForeground(new Color(180, 0, 0));
 
-        JTextArea previewArea = new JTextArea(8, 28);
-        previewArea.setEditable(false);
-        previewArea.setLineWrap(true);
-        previewArea.setWrapStyleWord(true);
-
-        final int[] increment = {defaultIncrement == 0 ? 1 : defaultIncrement};
+        final int[] selectedParts = {normalizeParts(defaultParts)};
+        final int[] increment = {normalizeIncrement(defaultIncrement)};
+        final boolean[] reverseOrder = {defaultReverseOrder};
+        final boolean[] firstWithoutLetter = {defaultFirstWithoutLetter};
         final AutoSplitDialogResult[] result = {AutoSplitDialogResult.cancel()};
+
+        JToggleButton firstWithoutLetterToggle = new JToggleButton(tr("First number without letter"));
+        firstWithoutLetterToggle.setSelected(defaultFirstWithoutLetter);
 
         Runnable updatePreview = () -> {
             incrementValueLabel.setText(tr("Current increment: {0}", increment[0]));
             validationLabel.setText(" ");
 
-            int parts;
-            try {
-                parts = Integer.parseInt(partsField.getText().trim());
-                if (parts < 2) {
-                    if (previewChangeListener != null) {
-                        previewChangeListener.onPreviewChanged(null, houseNumberField.getText().trim(), increment[0]);
-                    }
-                    previewArea.setText(tr("Enter a parts value >= 2."));
-                    return;
-                }
-            } catch (NumberFormatException ex) {
-                if (previewChangeListener != null) {
-                    previewChangeListener.onPreviewChanged(null, houseNumberField.getText().trim(), increment[0]);
-                }
-                previewArea.setText(tr("Enter a valid integer for parts."));
-                return;
-            }
+            int parts = selectedParts[0];
 
             String startValue = houseNumberField.getText().trim();
-            if (startValue.isEmpty()) {
-                String previewError = previewChangeListener == null
-                    ? null
-                    : previewChangeListener.onPreviewChanged(parts, startValue, increment[0]);
-                if (previewError != null) {
-                    previewArea.setText(previewError);
-                    return;
-                }
-                previewArea.setText(tr("No house numbers will be assigned."));
+            boolean enableFirstWithoutLetter = houseNumberService.supportsFirstWithoutLetter(startValue);
+            firstWithoutLetterToggle.setEnabled(enableFirstWithoutLetter);
+            if (!enableFirstWithoutLetter) {
+                firstWithoutLetter[0] = false;
+                firstWithoutLetterToggle.setSelected(false);
+            } else {
+                firstWithoutLetter[0] = firstWithoutLetterToggle.isSelected();
+            }
+
+            String previewError = previewChangeListener == null
+                ? null
+                : previewChangeListener.onPreviewChanged(
+                    parts,
+                    startValue,
+                    increment[0],
+                    reverseOrder[0],
+                    firstWithoutLetter[0]
+                );
+
+            if (previewError != null) {
+                validationLabel.setText(previewError);
                 return;
             }
 
-            try {
-                List<String> numbers = houseNumberService.generateSequence(startValue, increment[0], parts);
-                String previewError = previewChangeListener == null
-                    ? null
-                    : previewChangeListener.onPreviewChanged(parts, startValue, increment[0]);
-                if (previewError != null) {
-                    previewArea.setText(previewError);
-                    return;
+            if (!startValue.isEmpty()) {
+                try {
+                    houseNumberService.generateSequence(startValue, increment[0], parts, firstWithoutLetter[0]);
+                } catch (IllegalArgumentException ex) {
+                    validationLabel.setText(ex.getMessage());
                 }
-                StringBuilder builder = new StringBuilder();
-                builder.append(tr("Preview (assignment order):")).append('\n');
-                for (int i = 0; i < numbers.size(); i++) {
-                    builder.append(i + 1).append(": ").append(numbers.get(i)).append('\n');
-                }
-                previewArea.setText(builder.toString());
-            } catch (IllegalArgumentException ex) {
-                if (previewChangeListener != null) {
-                    previewChangeListener.onPreviewChanged(null, startValue, increment[0]);
-                }
-                previewArea.setText(ex.getMessage());
             }
         };
 
@@ -137,43 +130,46 @@ public class AutoSplitOptionsDialog {
             }
         };
 
-        partsField.getDocument().addDocumentListener(previewUpdateListener);
         houseNumberField.getDocument().addDocumentListener(previewUpdateListener);
 
+        JPanel partsPanel = createPartsPanel(selectedParts, updatePreview);
         JButton plusOneButton = createIncrementButton("+1", 1, increment, updatePreview);
         JButton plusTwoButton = createIncrementButton("+2", 2, increment, updatePreview);
-        JButton minusOneButton = createIncrementButton("-1", -1, increment, updatePreview);
-        JButton minusTwoButton = createIncrementButton("-2", -2, increment, updatePreview);
+        JToggleButton reverseOrderToggle = createReverseToggle(reverseOrder, updatePreview);
+        reverseOrderToggle.setSelected(defaultReverseOrder);
+        firstWithoutLetterToggle.addActionListener(e -> {
+            firstWithoutLetter[0] = firstWithoutLetterToggle.isSelected();
+            updatePreview.run();
+        });
 
-        JButton okButton = new JButton(tr("OK"));
+        JButton okButton = new JButton(tr("Apply"));
         JButton skipButton = new JButton(tr("Skip"));
         JButton cancelButton = new JButton(tr("Cancel"));
+        Runnable cancelDialog = () -> {
+            result[0] = AutoSplitDialogResult.cancel();
+            dialog.dispose();
+        };
 
         okButton.addActionListener(e -> {
-            int parts;
-            try {
-                parts = Integer.parseInt(partsField.getText().trim());
-            } catch (NumberFormatException ex) {
-                validationLabel.setText(tr("Please enter a valid integer for number of parts."));
-                return;
-            }
-
-            if (parts < 2) {
-                validationLabel.setText(tr("Number of parts must be at least 2."));
-                return;
-            }
+            int parts = selectedParts[0];
 
             String startValue = houseNumberField.getText().trim();
             if (!startValue.isEmpty()) {
                 try {
-                    houseNumberService.generateSequence(startValue, increment[0], parts);
+                    houseNumberService.generateSequence(startValue, increment[0], parts, firstWithoutLetter[0]);
                 } catch (IllegalArgumentException ex) {
                     validationLabel.setText(ex.getMessage());
                     return;
                 }
             }
 
-            result[0] = AutoSplitDialogResult.apply(parts, startValue, increment[0]);
+            result[0] = AutoSplitDialogResult.apply(
+                parts,
+                startValue,
+                increment[0],
+                reverseOrder[0],
+                firstWithoutLetter[0]
+            );
             dialog.dispose();
         });
 
@@ -183,69 +179,39 @@ public class AutoSplitOptionsDialog {
         });
 
         cancelButton.addActionListener(e -> {
-            result[0] = AutoSplitDialogResult.cancel();
-            dialog.dispose();
+            cancelDialog.run();
         });
 
-        JPanel content = new JPanel(new BorderLayout(8, 8));
-        content.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        JPanel content = new JPanel(new BorderLayout(10, 10));
+        content.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
 
-        JPanel formPanel = new JPanel(new GridBagLayout());
-        GridBagConstraints gbc = new GridBagConstraints();
-        gbc.insets = new Insets(3, 3, 3, 3);
-        gbc.anchor = GridBagConstraints.WEST;
-
-        gbc.gridx = 0;
-        gbc.gridy = 0;
-        formPanel.add(new JLabel(tr("Split into how many parts?")), gbc);
-        gbc.gridx = 1;
-        formPanel.add(partsField, gbc);
-
-        gbc.gridx = 0;
-        gbc.gridy = 1;
-        formPanel.add(new JLabel(tr("Starting house number (optional):")), gbc);
-        gbc.gridx = 1;
-        formPanel.add(houseNumberField, gbc);
-
-        gbc.gridx = 0;
-        gbc.gridy = 2;
-        formPanel.add(new JLabel(tr("Increment:")), gbc);
-
-        JPanel incrementPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-        incrementPanel.add(plusOneButton);
-        incrementPanel.add(plusTwoButton);
-        incrementPanel.add(minusOneButton);
-        incrementPanel.add(minusTwoButton);
-        incrementPanel.add(incrementValueLabel);
-
-        gbc.gridx = 1;
-        formPanel.add(incrementPanel, gbc);
-
-        gbc.gridx = 0;
-        gbc.gridy = 3;
-        gbc.gridwidth = 2;
-        formPanel.add(new JLabel(tr("For left-right buildings, numbering runs from left to right; otherwise from top to bottom.")), gbc);
-
-        gbc.gridy = 4;
-        formPanel.add(validationLabel, gbc);
+        JPanel formPanel = createFormPanel(
+            partsPanel,
+            houseNumberField,
+            incrementValueLabel,
+            plusOneButton,
+            plusTwoButton,
+            reverseOrderToggle,
+            firstWithoutLetterToggle,
+            validationLabel
+        );
 
         content.add(formPanel, BorderLayout.NORTH);
-        content.add(new JScrollPane(previewArea), BorderLayout.CENTER);
-
-        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        buttonPanel.add(okButton);
-        buttonPanel.add(skipButton);
-        buttonPanel.add(cancelButton);
-        content.add(buttonPanel, BorderLayout.SOUTH);
+        content.add(createButtonPanel(okButton, skipButton, cancelButton), BorderLayout.SOUTH);
 
         dialog.setContentPane(content);
         dialog.getRootPane().setDefaultButton(okButton);
+        dialog.getRootPane().registerKeyboardAction(
+            e -> cancelDialog.run(),
+            KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0),
+            JComponent.WHEN_IN_FOCUSED_WINDOW
+        );
         dialog.pack();
         dialog.setLocationRelativeTo(parent);
 
         updatePreview.run();
 
-        SwingUtilities.invokeLater(partsField::requestFocusInWindow);
+        SwingUtilities.invokeLater(houseNumberField::requestFocusInWindow);
         dialog.setVisible(true);
 
         return result[0];
@@ -258,6 +224,154 @@ public class AutoSplitOptionsDialog {
             updatePreview.run();
         });
         return button;
+    }
+
+    private JToggleButton createReverseToggle(boolean[] reverseOrder, Runnable updatePreview) {
+        JToggleButton toggle = new JToggleButton(tr("Reverse order"));
+        toggle.addActionListener(e -> {
+            reverseOrder[0] = toggle.isSelected();
+            updatePreview.run();
+        });
+        return toggle;
+    }
+
+    private JPanel createPartsPanel(int[] selectedParts, Runnable updatePreview) {
+        JPanel partsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        ButtonGroup partsGroup = new ButtonGroup();
+
+        for (int value = 2; value <= 8; value++) {
+            final int partValue = value;
+            JToggleButton button = new JToggleButton(Integer.toString(value));
+            button.addActionListener(e -> {
+                selectedParts[0] = partValue;
+                updatePreview.run();
+            });
+            if (value == selectedParts[0]) {
+                button.setSelected(true);
+            }
+            partsGroup.add(button);
+            partsPanel.add(button);
+        }
+
+        return partsPanel;
+    }
+
+    private JPanel createFormPanel(
+        JPanel partsPanel,
+        JTextField houseNumberField,
+        JLabel incrementValueLabel,
+        JButton plusOneButton,
+        JButton plusTwoButton,
+        JToggleButton reverseOrderToggle,
+        JToggleButton firstWithoutLetterToggle,
+        JLabel validationLabel
+    ) {
+        JPanel formPanel = new JPanel(new GridBagLayout());
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(4, 4, 4, 4);
+        gbc.anchor = GridBagConstraints.WEST;
+
+        partsPanel.setPreferredSize(new Dimension(320, partsPanel.getPreferredSize().height));
+        houseNumberField.setPreferredSize(new Dimension(220, houseNumberField.getPreferredSize().height));
+
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        gbc.weightx = 0;
+        gbc.fill = GridBagConstraints.NONE;
+        formPanel.add(new JLabel(tr("Parts:")), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        formPanel.add(partsPanel, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 1;
+        gbc.weightx = 0;
+        gbc.fill = GridBagConstraints.NONE;
+        formPanel.add(new JLabel(tr("Starting house number (optional):")), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        formPanel.add(houseNumberField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 2;
+        gbc.weightx = 0;
+        gbc.fill = GridBagConstraints.NONE;
+        formPanel.add(new JLabel(tr("Increment:")), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        formPanel.add(createIncrementPanel(incrementValueLabel, plusOneButton, plusTwoButton), gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 3;
+        gbc.gridwidth = 1;
+        gbc.weightx = 0;
+        gbc.fill = GridBagConstraints.NONE;
+        formPanel.add(new JLabel(""), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        gbc.fill = GridBagConstraints.NONE;
+        formPanel.add(reverseOrderToggle, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 4;
+        gbc.gridwidth = 1;
+        gbc.weightx = 0;
+        gbc.fill = GridBagConstraints.NONE;
+        formPanel.add(new JLabel(""), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        formPanel.add(firstWithoutLetterToggle, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 5;
+        gbc.gridwidth = 2;
+        gbc.weightx = 1.0;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        formPanel.add(validationLabel, gbc);
+
+        return formPanel;
+    }
+
+    private JPanel createIncrementPanel(
+        JLabel incrementValueLabel,
+        JButton plusOneButton,
+        JButton plusTwoButton
+    ) {
+        JPanel incrementPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        incrementPanel.add(plusOneButton);
+        incrementPanel.add(plusTwoButton);
+        incrementPanel.add(incrementValueLabel);
+        return incrementPanel;
+    }
+
+    private int normalizeParts(int parts) {
+        if (parts < 2) {
+            return 2;
+        }
+        if (parts > 8) {
+            return 8;
+        }
+        return parts;
+    }
+
+    private int normalizeIncrement(int increment) {
+        return increment == 2 ? 2 : 1;
+    }
+
+    private JPanel createButtonPanel(JButton okButton, JButton skipButton, JButton cancelButton) {
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        buttonPanel.add(okButton);
+        buttonPanel.add(skipButton);
+        buttonPanel.add(cancelButton);
+        return buttonPanel;
     }
 }
 

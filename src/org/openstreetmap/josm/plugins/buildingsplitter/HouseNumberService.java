@@ -14,6 +14,10 @@ public class HouseNumberService {
     private static final Pattern LETTER_PATTERN = Pattern.compile("^([A-Za-z])$");
 
     public List<String> generateSequence(String startHouseNumber, int increment, int count) {
+        return generateSequence(startHouseNumber, increment, count, false);
+    }
+
+    public List<String> generateSequence(String startHouseNumber, int increment, int count, boolean firstWithoutLetter) {
         if (count < 1) {
             throw new IllegalArgumentException(tr("Number of parts must be at least 1."));
         }
@@ -28,6 +32,9 @@ public class HouseNumberService {
 
         Matcher numericMatcher = NUMERIC_PATTERN.matcher(start);
         if (numericMatcher.matches()) {
+            if (firstWithoutLetter) {
+                throw new IllegalArgumentException(tr("'First number without letter' requires a starting value with letter suffix (e.g. 10a)."));
+            }
             long base = Long.parseLong(numericMatcher.group(1));
             List<String> values = new ArrayList<>();
             for (int i = 0; i < count; i++) {
@@ -42,15 +49,26 @@ public class HouseNumberService {
             String prefix = numericSuffixMatcher.group(1);
             char startLetter = numericSuffixMatcher.group(2).charAt(0);
             List<String> values = new ArrayList<>();
-            for (int i = 0; i < count; i++) {
-                char shifted = shiftLetter(startLetter, increment * i);
-                values.add(prefix + shifted);
+            if (firstWithoutLetter) {
+                values.add(prefix);
+                for (int i = 1; i < count; i++) {
+                    char shifted = shiftLetter(startLetter, increment * (i - 1));
+                    values.add(prefix + shifted);
+                }
+            } else {
+                for (int i = 0; i < count; i++) {
+                    char shifted = shiftLetter(startLetter, increment * i);
+                    values.add(prefix + shifted);
+                }
             }
             return values;
         }
 
         Matcher letterMatcher = LETTER_PATTERN.matcher(start);
         if (letterMatcher.matches()) {
+            if (firstWithoutLetter) {
+                throw new IllegalArgumentException(tr("'First number without letter' is not supported for letter-only start values."));
+            }
             char startLetter = letterMatcher.group(1).charAt(0);
             List<String> values = new ArrayList<>();
             for (int i = 0; i < count; i++) {
@@ -82,6 +100,14 @@ public class HouseNumberService {
         }
 
         throw new IllegalArgumentException(tr("Unsupported house number letter format."));
+    }
+
+    public boolean supportsFirstWithoutLetter(String startHouseNumber) {
+        String start = startHouseNumber == null ? "" : startHouseNumber.trim();
+        if (start.isEmpty()) {
+            return false;
+        }
+        return NUMERIC_SUFFIX_PATTERN.matcher(start).matches();
     }
 }
 

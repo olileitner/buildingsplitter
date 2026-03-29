@@ -12,24 +12,41 @@ public final class AutoSplitDialogResult {
     private final int parts;
     private final String startHouseNumber;
     private final int increment;
+    private final boolean reverseOrder;
+    private final boolean firstWithoutLetter;
 
-    private AutoSplitDialogResult(Outcome outcome, int parts, String startHouseNumber, int increment) {
+    private AutoSplitDialogResult(
+        Outcome outcome,
+        int parts,
+        String startHouseNumber,
+        int increment,
+        boolean reverseOrder,
+        boolean firstWithoutLetter
+    ) {
         this.outcome = outcome;
         this.parts = parts;
         this.startHouseNumber = startHouseNumber;
         this.increment = increment;
+        this.reverseOrder = reverseOrder;
+        this.firstWithoutLetter = firstWithoutLetter;
     }
 
-    public static AutoSplitDialogResult apply(int parts, String startHouseNumber, int increment) {
-        return new AutoSplitDialogResult(Outcome.APPLY, parts, startHouseNumber, increment);
+    public static AutoSplitDialogResult apply(
+        int parts,
+        String startHouseNumber,
+        int increment,
+        boolean reverseOrder,
+        boolean firstWithoutLetter
+    ) {
+        return new AutoSplitDialogResult(Outcome.APPLY, parts, startHouseNumber, increment, reverseOrder, firstWithoutLetter);
     }
 
     public static AutoSplitDialogResult skip() {
-        return new AutoSplitDialogResult(Outcome.SKIP, 0, "", 0);
+        return new AutoSplitDialogResult(Outcome.SKIP, 0, "", 0, false, false);
     }
 
     public static AutoSplitDialogResult cancel() {
-        return new AutoSplitDialogResult(Outcome.CANCEL, 0, "", 0);
+        return new AutoSplitDialogResult(Outcome.CANCEL, 0, "", 0, false, false);
     }
 
     public boolean isSkip() {
@@ -50,6 +67,14 @@ public final class AutoSplitDialogResult {
 
     public int getIncrement() {
         return increment;
+    }
+
+    public boolean isReverseOrder() {
+        return reverseOrder;
+    }
+
+    public boolean isFirstWithoutLetter() {
+        return firstWithoutLetter;
     }
 }
 

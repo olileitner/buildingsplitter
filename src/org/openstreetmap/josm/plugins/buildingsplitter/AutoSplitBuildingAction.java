@@ -16,6 +16,7 @@ import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Node;
 import org.openstreetmap.josm.data.osm.Way;
 import org.openstreetmap.josm.gui.MainApplication;
+import org.openstreetmap.josm.tools.ImageProvider;
 import org.openstreetmap.josm.tools.Shortcut;
 
 public class AutoSplitBuildingAction extends JosmAction {
@@ -27,7 +28,7 @@ public class AutoSplitBuildingAction extends JosmAction {
     public AutoSplitBuildingAction() {
         super(
             tr("AutoSplit Building"),
-            null,
+            "buildingsplitter_auto",
             tr("Automatically split a selected building into multiple parts"),
             Shortcut.registerShortcut(
                 "tools:buildingsplitter:autosplitbuilding",
@@ -35,8 +36,10 @@ public class AutoSplitBuildingAction extends JosmAction {
                 0,
                 Shortcut.NONE
             ),
-            false
+            true
         );
+        putValue(SMALL_ICON, ImageProvider.get("buildingsplitter_auto"));
+        putValue(LARGE_ICON_KEY, ImageProvider.get("buildingsplitter_auto"));
         this.autoSplitService = new AutoSplitBuildingService();
         this.optionsDialog = new AutoSplitOptionsDialog();
         this.houseNumberService = new HouseNumberService();
@@ -58,6 +61,8 @@ public class AutoSplitBuildingAction extends JosmAction {
 
         int lastPartsValue = 2;
         int lastIncrementValue = 1;
+        boolean lastReverseOrder = false;
+        boolean lastFirstWithoutLetter = false;
         String lastStartHouseNumber = "";
         List<Way> lastSuccessfulCreatedWays = Collections.emptyList();
 
@@ -78,6 +83,8 @@ public class AutoSplitBuildingAction extends JosmAction {
                 MainApplication.getMainFrame(),
                 lastPartsValue,
                 lastIncrementValue,
+                lastReverseOrder,
+                lastFirstWithoutLetter,
                 lastStartHouseNumber,
                 previewSession::refreshPreview
             );
@@ -93,6 +100,8 @@ public class AutoSplitBuildingAction extends JosmAction {
             int requestedParts = dialogResult.getParts();
             lastPartsValue = requestedParts;
             lastIncrementValue = dialogResult.getIncrement();
+            lastReverseOrder = dialogResult.isReverseOrder();
+            lastFirstWithoutLetter = dialogResult.isFirstWithoutLetter();
             lastStartHouseNumber = dialogResult.getStartHouseNumber();
 
             SplitResult result = previewSession.finalizePreview(dialogResult);
