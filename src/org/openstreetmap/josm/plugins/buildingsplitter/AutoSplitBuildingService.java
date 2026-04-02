@@ -126,14 +126,17 @@ public class AutoSplitBuildingService {
     }
 
     private SplitResult splitSingleWay(DataSet dataSet, Way targetWay, SplitGeometry geometry, double splitPosition) {
-        Line splitLine = createAutoSplitLine(geometry, splitPosition);
-        IntersectionResult intersectionResult =
-            intersectionService.findSplitIntersections(targetWay, splitLine.start(), splitLine.end());
-        if (!intersectionResult.isSuccess()) {
-            return SplitResult.failure(tr("Unable to compute split intersections: {0}", intersectionResult.getMessage()));
+        List<IntersectionPoint> intersections = computeDirectInterpolatedIntersections(targetWay, geometry.mainAxis(), splitPosition);
+        if (intersections == null) {
+            Line splitLine = createAutoSplitLine(geometry, splitPosition);
+            IntersectionResult intersectionResult =
+                intersectionService.findSplitIntersections(targetWay, splitLine.start(), splitLine.end());
+            if (!intersectionResult.isSuccess()) {
+                return SplitResult.failure(tr("Unable to compute split intersections: {0}", intersectionResult.getMessage()));
+            }
+            intersections = intersectionResult.getIntersections();
         }
 
-        List<IntersectionPoint> intersections = intersectionResult.getIntersections();
         if (intersections.size() != 2) {
             return SplitResult.failure(tr("AutoSplit requires exactly two intersections, but found {0}.", intersections.size()));
         }
@@ -176,6 +179,93 @@ public class AutoSplitBuildingService {
         dataSet.setSelected(selection);
 
         return splitService.splitSelectedBuilding(dataSet);
+    }
+
+    private List<IntersectionPoint> computeDirectInterpolatedIntersections(Way way, Vector2D mainAxis, double splitPosition) {
+        List<Node> corners = extractFourCorners(way);
+        if (corners == null) {
+            return null;
+        }
+
+        EdgePair mainPair = selectMainOppositeEdgePair(corners);
+        if (mainPair == null) {
+            return null;
+        }
+
+        IntersectionPoint first = interpolateIntersectionOnEdge(mainPair.first(), mainAxis, splitPosition);
+        IntersectionPoint second = interpolateIntersectionOnEdge(mainPair.second(), mainAxis, splitPosition);
+        if (first == null || second == null) {
+            return null;
+        }
+
+        if (isSamePoint(first.getCoordinate(), second.getCoordinate())) {
+            return null;
+        }
+
+        List<IntersectionPoint> intersections = new ArrayList<>();
+        intersections.add(first);
+        intersections.add(second);
+        intersections.sort(Comparator.comparingInt(IntersectionPoint::getSegmentIndex));
+        return intersections;
+    }
+
+    private EdgePair selectMainOppositeEdgePair(List<Node> corners) {
+        Edge edgeAb = new Edge(corners.get(0), corners.get(1), 0);
+        Edge edgeBc = new Edge(corners.get(1), corners.get(2), 1);
+        Edge edgeCd = new Edge(corners.get(2), corners.get(3), 2);
+        Edge edgeDa = new Edge(corners.get(3), corners.get(0), 3);
+
+        double pair1AverageLength = (edgeAb.length() + edgeCd.length()) / 2.0;
+        double pair2AverageLength = (edgeBc.length() + edgeDa.length()) / 2.0;
+
+        if (pair1AverageLength >= pair2AverageLength) {
+            return new EdgePair(edgeAb, edgeCd);
+        }
+        return new EdgePair(edgeBc, edgeDa);
+    }
+
+    private IntersectionPoint interpolateIntersectionOnEdge(Edge edge, Vector2D mainAxis, double splitPosition) {
+        double startProjection = projectOnAxis(edge.start(), mainAxis);
+        double endProjection = projectOnAxis(edge.end(), mainAxis);
+        double projectionDelta = endProjection - startProjection;
+        if (Math.abs(projectionDelta) <= EPSILON) {
+            return null;
+        }
+
+        double t = (splitPosition - startProjection) / projectionDelta;
+        if (t < -EPSILON || t > 1.0 + EPSILON) {
+            return null;
+        }
+
+        double clampedT = Math.max(0.0, Math.min(1.0, t));
+        LatLon coordinate = interpolate(edge.start(), edge.end(), clampedT);
+
+        Node existingNode = null;
+        boolean existingNodeIntersection = false;
+        if (clampedT <= EPSILON) {
+            existingNode = edge.start();
+            existingNodeIntersection = true;
+        } else if (Math.abs(clampedT - 1.0) <= EPSILON) {
+            existingNode = edge.end();
+            existingNodeIntersection = true;
+        }
+
+        return new IntersectionPoint(coordinate, edge.segmentIndex(), existingNode, existingNodeIntersection);
+    }
+
+    private double projectOnAxis(Node node, Vector2D axis) {
+        return (node.lon() * axis.x()) + (node.lat() * axis.y());
+    }
+
+    private LatLon interpolate(Node start, Node end, double t) {
+        double lat = start.lat() + ((end.lat() - start.lat()) * t);
+        double lon = start.lon() + ((end.lon() - start.lon()) * t);
+        return new LatLon(lat, lon);
+    }
+
+    private boolean isSamePoint(LatLon first, LatLon second) {
+        return Math.abs(first.lat() - second.lat()) <= EPSILON
+            && Math.abs(first.lon() - second.lon()) <= EPSILON;
     }
 
     private SplitResult orthogonalizeCreatedWays(DataSet dataSet, SplitResult splitResult) {
@@ -260,10 +350,6 @@ public class AutoSplitBuildingService {
         }
 
         return new ProjectionInterval(min, max);
-    }
-
-    private double projectOnAxis(Node node, Vector2D axis) {
-        return (node.lon() * axis.x()) + (node.lat() * axis.y());
     }
 
     private List<Way> orderWaysByAxis(List<Way> ways, Vector2D axis) {
@@ -461,6 +547,52 @@ public class AutoSplitBuildingService {
 
         private double max() {
             return max;
+        }
+    }
+
+    private static final class Edge {
+        private final Node start;
+        private final Node end;
+        private final int segmentIndex;
+
+        private Edge(Node start, Node end, int segmentIndex) {
+            this.start = start;
+            this.end = end;
+            this.segmentIndex = segmentIndex;
+        }
+
+        private Node start() {
+            return start;
+        }
+
+        private Node end() {
+            return end;
+        }
+
+        private int segmentIndex() {
+            return segmentIndex;
+        }
+
+        private double length() {
+            return Math.hypot(end.lon() - start.lon(), end.lat() - start.lat());
+        }
+    }
+
+    private static final class EdgePair {
+        private final Edge first;
+        private final Edge second;
+
+        private EdgePair(Edge first, Edge second) {
+            this.first = first;
+            this.second = second;
+        }
+
+        private Edge first() {
+            return first;
+        }
+
+        private Edge second() {
+            return second;
         }
     }
 
