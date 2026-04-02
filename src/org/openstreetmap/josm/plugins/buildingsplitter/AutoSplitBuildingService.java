@@ -105,7 +105,8 @@ public class AutoSplitBuildingService {
                 new SplitResult.SplitAxis(geometry.mainAxis().x(), geometry.mainAxis().y())
             );
 
-            return orthogonalizeCreatedWays(dataSet, finalResult);
+            dataSet.setSelected(orderedFinalWays);
+            return finalResult;
         } catch (RuntimeException ex) {
             return rollbackAndFailure(undoStartSize, tr("AutoSplit failed unexpectedly. Changes were rolled back."));
         }
