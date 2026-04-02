@@ -1246,33 +1246,50 @@ public class SplitBuildingMapMode extends MapMode {
     private final class PreviewLinePaintable implements MapViewPaintable {
         @Override
         public void paint(Graphics2D g, MapView mapView, Bounds bounds) {
-            if (dragStart == null || dragCurrent == null || mapView == null) {
+            if (mapView == null) {
                 return;
             }
 
-            Point startPoint = mapView.getPoint(dragStart);
-            Point currentPoint = mapView.getPoint(dragCurrent);
-            if (startPoint == null || currentPoint == null) {
-                return;
-            }
-
-            g.setColor(new Color(0, 120, 215));
-            g.setStroke(new BasicStroke(2.0f));
-            g.drawLine(startPoint.x, startPoint.y, currentPoint.x, currentPoint.y);
-
-            if (clickFirstNode != null && clickFirstNode.getCoor() != null) {
-                Point firstPoint = mapView.getPoint(clickFirstNode.getCoor());
-                if (firstPoint != null) {
-                    int radius = 10;
-                    g.setColor(new Color(245, 170, 60, 220));
-                    g.setStroke(new BasicStroke(2.5f));
-                    g.drawOval(firstPoint.x - radius, firstPoint.y - radius, radius * 2, radius * 2);
+            if (dragStart != null && dragCurrent != null) {
+                Point startPoint = mapView.getPoint(dragStart);
+                Point currentPoint = mapView.getPoint(dragCurrent);
+                if (startPoint != null && currentPoint != null) {
+                    g.setColor(new Color(0, 120, 215));
+                    g.setStroke(new BasicStroke(2.0f));
+                    g.drawLine(startPoint.x, startPoint.y, currentPoint.x, currentPoint.y);
                 }
             }
 
             LatLon secondPreview = clickSecondPreviewNode != null && clickSecondPreviewNode.getCoor() != null
                 ? clickSecondPreviewNode.getCoor()
                 : clickSecondPreviewPoint;
+
+            if (clickFirstNode != null && clickFirstNode.getCoor() != null && secondPreview != null) {
+                Point firstPreviewPoint = mapView.getPoint(clickFirstNode.getCoor());
+                Point secondPreviewPointMap = mapView.getPoint(secondPreview);
+                if (firstPreviewPoint != null && secondPreviewPointMap != null) {
+                    g.setColor(new Color(0, 120, 215, 170));
+                    g.setStroke(new BasicStroke(
+                        2.0f,
+                        BasicStroke.CAP_ROUND,
+                        BasicStroke.JOIN_ROUND,
+                        0.0f,
+                        new float[] {6.0f, 4.0f},
+                        0.0f
+                    ));
+                    g.drawLine(firstPreviewPoint.x, firstPreviewPoint.y, secondPreviewPointMap.x, secondPreviewPointMap.y);
+                }
+            }
+
+            if (clickFirstNode != null && clickFirstNode.getCoor() != null) {
+                Point firstPoint = mapView.getPoint(clickFirstNode.getCoor());
+                if (firstPoint != null) {
+                    int radius = 10;
+                    g.setColor(new Color(245, 170, 60, 220));
+                    g.setStroke(new BasicStroke(3.0f));
+                    g.drawOval(firstPoint.x - radius, firstPoint.y - radius, radius * 2, radius * 2);
+                }
+            }
             if (secondPreview != null) {
                 Point secondPoint = mapView.getPoint(secondPreview);
                 if (secondPoint != null) {
