@@ -42,7 +42,7 @@ public class SplitBuildingMapMode extends MapMode {
     private static final Cursor MANUAL_CURSOR = Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR);
     private static final Cursor AUTOSPLIT_CURSOR = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR);
     private static final double SNAP_FEEDBACK_MAX_LINE_LENGTH_METERS = 1000.0;
-    private static final double SNAP_FEEDBACK_CORNER_DISTANCE_METERS = 0.40;
+    private static final double SNAP_FEEDBACK_CORNER_DISTANCE_METERS = 1.0;
     private static final double EARTH_RADIUS_METERS = 6_371_000.0;
     private static final String MANUAL_MODE_TOOLTIP = tr("Manual split mode: drag a line across one building");
     private static final String AUTOSPLIT_MODE_TOOLTIP = tr("AutoSplit mode (Ctrl): click inside a building");
@@ -65,8 +65,6 @@ public class SplitBuildingMapMode extends MapMode {
     private LatLon dragCurrent;
     private Node snapCandidate;
     private boolean snappingEnabled;
-    private Way snapTargetWay;
-    private boolean snapTargetResolved;
     private boolean ctrlAutoSplitMode;
 
     private int lastAutoSplitParts = 2;
@@ -153,8 +151,6 @@ public class SplitBuildingMapMode extends MapMode {
         dragCurrent = start;
         snappingEnabled = true;
         snapCandidate = null;
-        snapTargetWay = null;
-        snapTargetResolved = false;
         repaintMapView();
     }
 
@@ -503,7 +499,7 @@ public class SplitBuildingMapMode extends MapMode {
             return;
         }
 
-        Way targetWay = resolveSnapTargetWay(dataSet);
+        Way targetWay = resolveSnapTargetWay(dataSet, dragStart, dragCurrent);
         if (targetWay == null) {
             return;
         }
@@ -511,32 +507,42 @@ public class SplitBuildingMapMode extends MapMode {
         snapCandidate = findNearestCornerCandidate(targetWay, dragStart, dragCurrent);
     }
 
-    private Way resolveSnapTargetWay(DataSet dataSet) {
-        if (snapTargetResolved) {
-            return snapTargetWay;
-        }
-        snapTargetResolved = true;
-
+    private Way resolveSnapTargetWay(DataSet dataSet, LatLon lineStart, LatLon lineEnd) {
         Way selectedBuilding = getSingleSelectedBuilding(dataSet);
         if (selectedBuilding != null) {
-            snapTargetWay = selectedBuilding;
-            return snapTargetWay;
+            return selectedBuilding;
         }
 
-        List<Way> containing = new ArrayList<>();
+        List<Way> crossedBuildings = new ArrayList<>();
         for (Way way : dataSet.getWays()) {
             if (way == null || way.isDeleted() || !way.isClosed() || !way.hasKey("building")) {
                 continue;
             }
-            if (containsPoint(way, dragStart)) {
-                containing.add(way);
+
+            IntersectionResult intersectionResult = intersectionService.findSplitIntersections(way, lineStart, lineEnd);
+            if (isLikelyLineTarget(intersectionResult)) {
+                crossedBuildings.add(way);
             }
         }
 
-        if (containing.size() == 1) {
-            snapTargetWay = containing.get(0);
+        if (crossedBuildings.size() == 1) {
+            return crossedBuildings.get(0);
         }
-        return snapTargetWay;
+        return null;
+    }
+
+    private boolean isLikelyLineTarget(IntersectionResult intersectionResult) {
+        if (intersectionResult == null) {
+            return false;
+        }
+        if (intersectionResult.isSuccess()) {
+            return !intersectionResult.getIntersections().isEmpty();
+        }
+
+        String message = intersectionResult.getMessage();
+        return tr("Line touches building only once").equals(message)
+            || tr("Line intersects building multiple times; not supported").equals(message)
+            || tr("Line overlaps building edge; not supported").equals(message);
     }
 
     private Way getSingleSelectedBuilding(DataSet dataSet) {
@@ -643,8 +649,6 @@ public class SplitBuildingMapMode extends MapMode {
         dragCurrent = null;
         snapCandidate = null;
         snappingEnabled = false;
-        snapTargetWay = null;
-        snapTargetResolved = false;
     }
 
     private void repaintMapView() {
@@ -788,7 +792,7 @@ public class SplitBuildingMapMode extends MapMode {
             if (snapCandidate != null && snapCandidate.getCoor() != null) {
                 Point snapPoint = mapView.getPoint(snapCandidate.getCoor());
                 if (snapPoint != null) {
-                    int radius = 6;
+                    int radius = 9;
                     g.setColor(new Color(84, 180, 84, 210));
                     g.setStroke(new BasicStroke(2.0f));
                     g.drawOval(snapPoint.x - radius, snapPoint.y - radius, radius * 2, radius * 2);

@@ -14,7 +14,7 @@ import org.openstreetmap.josm.data.projection.ProjectionRegistry;
 public class BuildingIntersectionService {
 
     private static final double EPSILON = 1e-9;
-    private static final double ENDPOINT_SNAP_TOLERANCE_METERS = 0.30;
+    private static final double ENDPOINT_SNAP_TOLERANCE_METERS = 1.0;
     private static final double ENDPOINT_SNAP_TOLERANCE_DEGREES = 1e-7;
 
     public IntersectionResult findSplitIntersections(Way buildingWay, LatLon lineStart, LatLon lineEnd) {
@@ -54,13 +54,9 @@ public class BuildingIntersectionService {
             }
 
             LatLon intersectionCoordinate = segmentIntersection.intersection;
-            Node existingNode = null;
-            if (isNearPoint(intersectionCoordinate, a)) {
-                existingNode = nodeA;
-                intersectionCoordinate = a;
-            } else if (isNearPoint(intersectionCoordinate, b)) {
-                existingNode = nodeB;
-                intersectionCoordinate = b;
+            Node existingNode = findNearestEndpointNode(intersectionCoordinate, nodeA, nodeB);
+            if (existingNode != null && existingNode.getCoor() != null) {
+                intersectionCoordinate = existingNode.getCoor();
             }
 
             IntersectionPoint candidate = new IntersectionPoint(
@@ -188,22 +184,55 @@ public class BuildingIntersectionService {
             && Math.abs(first.lon() - second.lon()) <= EPSILON;
     }
 
-    private boolean isNearPoint(LatLon first, LatLon second) {
-        if (first == null || second == null) {
+    private Node findNearestEndpointNode(LatLon intersectionCoordinate, Node nodeA, Node nodeB) {
+        if (intersectionCoordinate == null) {
+            return null;
+        }
+
+        LatLon a = nodeA == null ? null : nodeA.getCoor();
+        LatLon b = nodeB == null ? null : nodeB.getCoor();
+
+        double distanceToA = distanceBetween(intersectionCoordinate, a);
+        double distanceToB = distanceBetween(intersectionCoordinate, b);
+
+        boolean nearA = isWithinSnapTolerance(distanceToA);
+        boolean nearB = isWithinSnapTolerance(distanceToB);
+
+        if (!nearA && !nearB) {
+            return null;
+        }
+        if (nearA && nearB) {
+            return distanceToA <= distanceToB ? nodeA : nodeB;
+        }
+        return nearA ? nodeA : nodeB;
+    }
+
+    private boolean isWithinSnapTolerance(double distance) {
+        if (!Double.isFinite(distance)) {
             return false;
+        }
+        if (ProjectionRegistry.getProjection() != null) {
+            return distance <= ENDPOINT_SNAP_TOLERANCE_METERS;
+        }
+        return distance <= ENDPOINT_SNAP_TOLERANCE_DEGREES;
+    }
+
+    private double distanceBetween(LatLon first, LatLon second) {
+        if (first == null || second == null) {
+            return Double.POSITIVE_INFINITY;
         }
 
         if (ProjectionRegistry.getProjection() != null) {
             EastNorth firstEn = ProjectionRegistry.getProjection().latlon2eastNorth(first);
             EastNorth secondEn = ProjectionRegistry.getProjection().latlon2eastNorth(second);
             if (firstEn != null && secondEn != null) {
-                return firstEn.distance(secondEn) <= ENDPOINT_SNAP_TOLERANCE_METERS;
+                return firstEn.distance(secondEn);
             }
         }
 
         double latDiff = first.lat() - second.lat();
         double lonDiff = first.lon() - second.lon();
-        return Math.hypot(latDiff, lonDiff) <= ENDPOINT_SNAP_TOLERANCE_DEGREES;
+        return Math.hypot(latDiff, lonDiff);
     }
 
     private List<IntersectionPoint> deduplicateIntersections(List<IntersectionPoint> intersections) {
