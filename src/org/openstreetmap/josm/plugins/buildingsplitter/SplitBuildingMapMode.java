@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import javax.swing.JOptionPane;
 
@@ -43,6 +44,9 @@ public class SplitBuildingMapMode extends MapMode {
     private static final Cursor AUTOSPLIT_CURSOR = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR);
     private static final double SNAP_FEEDBACK_MAX_LINE_LENGTH_METERS = 1000.0;
     private static final double SNAP_FEEDBACK_CORNER_DISTANCE_METERS = 1.0;
+    private static final double CLICK_NODE_TOLERANCE_METERS = 1.5;
+    private static final double CLICK_EDGE_TOLERANCE_METERS = 1.5;
+    private static final double CLICK_AMBIGUITY_DELTA_METERS = 0.25;
     private static final double EARTH_RADIUS_METERS = 6_371_000.0;
     private static final String MANUAL_MODE_TOOLTIP = tr("Manual split mode: drag a line across one building");
     private static final String AUTOSPLIT_MODE_TOOLTIP = tr("AutoSplit mode (Ctrl): click inside a building");
@@ -63,7 +67,11 @@ public class SplitBuildingMapMode extends MapMode {
 
     private LatLon dragStart;
     private LatLon dragCurrent;
-    private Node snapCandidate;
+    private List<Node> snapCandidates;
+    private Way clickFirstWay;
+    private Node clickFirstNode;
+    private Node clickSecondPreviewNode;
+    private LatLon clickSecondPreviewPoint;
     private boolean snappingEnabled;
     private boolean ctrlAutoSplitMode;
 
@@ -90,6 +98,7 @@ public class SplitBuildingMapMode extends MapMode {
         this.autoSplitOptionsDialog = new AutoSplitOptionsDialog();
         this.houseNumberService = new HouseNumberService();
         this.previewLinePaintable = new PreviewLinePaintable();
+        this.snapCandidates = new ArrayList<>();
         putValue(SMALL_ICON, ImageProvider.get("mapmode", "buildingsplitter"));
         putValue(LARGE_ICON_KEY, ImageProvider.get("mapmode", "buildingsplitter"));
     }
@@ -150,7 +159,7 @@ public class SplitBuildingMapMode extends MapMode {
         dragStart = start;
         dragCurrent = start;
         snappingEnabled = true;
-        snapCandidate = null;
+        snapCandidates.clear();
         repaintMapView();
     }
 
@@ -217,15 +226,346 @@ public class SplitBuildingMapMode extends MapMode {
 
         dragCurrent = releasePoint;
         if (isSamePoint(dragStart, dragCurrent)) {
-            showError(tr("Please drag a line with two different points."));
-            resetState();
+            handleManualClickSelection(dataSet, releasePoint);
+            resetDragState();
             repaintMapView();
             return;
         }
 
         finishSplit(dataSet, dragStart, dragCurrent);
-        resetState();
+        resetDragState();
         repaintMapView();
+    }
+
+    @Override
+    public void mouseMoved(MouseEvent e) {
+        updateTemporaryMode(e.isControlDown());
+        if (ctrlAutoSplitMode || clickFirstWay == null || dragStart != null) {
+            if (clickSecondPreviewNode != null || clickSecondPreviewPoint != null) {
+                clickSecondPreviewNode = null;
+                clickSecondPreviewPoint = null;
+                repaintMapView();
+            }
+            return;
+        }
+
+        LatLon current = toLatLon(e);
+        if (!isValidClickedPoint(current)) {
+            return;
+        }
+
+        SecondClickResolution previewResolution = resolveSecondClick(clickFirstWay, current, false);
+        clickSecondPreviewNode = previewResolution == null ? null : previewResolution.existingNode();
+        clickSecondPreviewPoint = previewResolution == null ? null : previewResolution.coordinate();
+        repaintMapView();
+    }
+
+    private void handleManualClickSelection(DataSet dataSet, LatLon clickPoint) {
+        if (clickFirstWay == null || clickFirstNode == null) {
+            FirstClickSelection first = resolveFirstClick(dataSet, clickPoint, true);
+            if (first == null) {
+                return;
+            }
+            clickFirstWay = first.way();
+            clickFirstNode = first.node();
+            clickSecondPreviewNode = null;
+            clickSecondPreviewPoint = null;
+            return;
+        }
+
+        SecondClickResolution second = resolveSecondClick(clickFirstWay, clickPoint, true);
+        if (second == null) {
+            return;
+        }
+
+        if (second.existingNode() != null && second.existingNode().equals(clickFirstNode)) {
+            showError(tr("Please choose a different second split point."));
+            return;
+        }
+
+        performClickSplit(dataSet, clickFirstWay, clickFirstNode, second);
+    }
+
+    private FirstClickSelection resolveFirstClick(DataSet dataSet, LatLon clickPoint, boolean showErrors) {
+        List<FirstClickSelection> candidates = new ArrayList<>();
+
+        for (Way way : dataSet.getWays()) {
+            if (way == null || way.isDeleted() || !way.isClosed() || !way.hasKey("building")) {
+                continue;
+            }
+
+            List<Node> ringNodes = new ArrayList<>(way.getNodes());
+            if (ringNodes.size() > 1 && ringNodes.get(0).equals(ringNodes.get(ringNodes.size() - 1))) {
+                ringNodes.remove(ringNodes.size() - 1);
+            }
+
+            for (Node node : ringNodes) {
+                if (node.getCoor() == null) {
+                    continue;
+                }
+                double distance = distanceMeters(node.getCoor(), clickPoint);
+                if (distance <= CLICK_NODE_TOLERANCE_METERS) {
+                    candidates.add(new FirstClickSelection(way, node, distance));
+                }
+            }
+        }
+
+        if (candidates.isEmpty()) {
+            if (showErrors) {
+                showError(tr("First click must be near an existing building corner node."));
+            }
+            return null;
+        }
+
+        candidates.sort(Comparator
+            .comparingDouble(FirstClickSelection::distance)
+            .thenComparingLong(selection -> selection.way().getUniqueId())
+            .thenComparingLong(selection -> selection.node().getUniqueId()));
+
+        if (isAmbiguousByDistance(candidates.get(0).distance(), candidates, FirstClickSelection::distance)) {
+            if (showErrors) {
+                showError(tr("First click is ambiguous. Please click closer to one building corner."));
+            }
+            return null;
+        }
+
+        return candidates.get(0);
+    }
+
+    private SecondClickResolution resolveSecondClick(Way way, LatLon clickPoint, boolean showErrors) {
+        Node nearestNode = findNearestNodeOnWay(way, clickPoint, CLICK_NODE_TOLERANCE_METERS);
+        if (nearestNode != null) {
+            return new SecondClickResolution(nearestNode, null, nearestNode.getCoor());
+        }
+
+        List<SegmentCandidate> segments = findSegmentCandidates(way, clickPoint);
+        if (segments.isEmpty()) {
+            if (showErrors) {
+                showError(tr("Second click must be near a corner node or an edge of the same building."));
+            }
+            return null;
+        }
+
+        segments.sort(Comparator
+            .comparingDouble(SegmentCandidate::distance)
+            .thenComparingInt(SegmentCandidate::segmentIndex));
+
+        if (isAmbiguousByDistance(segments.get(0).distance(), segments, SegmentCandidate::distance)) {
+            if (showErrors) {
+                showError(tr("Second click is ambiguous. Please click closer to a single edge."));
+            }
+            return null;
+        }
+
+        SegmentCandidate best = segments.get(0);
+        Node existingEndpoint = best.existingEndpoint();
+        if (existingEndpoint != null) {
+            return new SecondClickResolution(existingEndpoint, null, existingEndpoint.getCoor());
+        }
+
+        IntersectionPoint intersectionPoint = new IntersectionPoint(
+            best.projectedPoint(),
+            best.segmentIndex(),
+            null,
+            false
+        );
+        return new SecondClickResolution(null, intersectionPoint, best.projectedPoint());
+    }
+
+    private Node findNearestNodeOnWay(Way way, LatLon clickPoint, double toleranceMeters) {
+        List<Node> ringNodes = new ArrayList<>(way.getNodes());
+        if (ringNodes.size() > 1 && ringNodes.get(0).equals(ringNodes.get(ringNodes.size() - 1))) {
+            ringNodes.remove(ringNodes.size() - 1);
+        }
+
+        Node nearest = null;
+        double nearestDistance = Double.POSITIVE_INFINITY;
+        for (Node node : ringNodes) {
+            if (node.getCoor() == null) {
+                continue;
+            }
+            double distance = distanceMeters(node.getCoor(), clickPoint);
+            if (distance <= toleranceMeters && distance < nearestDistance) {
+                nearest = node;
+                nearestDistance = distance;
+            }
+        }
+        return nearest;
+    }
+
+    private List<SegmentCandidate> findSegmentCandidates(Way way, LatLon clickPoint) {
+        List<Node> ringNodes = new ArrayList<>(way.getNodes());
+        if (ringNodes.size() > 1 && ringNodes.get(0).equals(ringNodes.get(ringNodes.size() - 1))) {
+            ringNodes.remove(ringNodes.size() - 1);
+        }
+
+        List<SegmentCandidate> candidates = new ArrayList<>();
+        for (int i = 0; i < ringNodes.size(); i++) {
+            Node start = ringNodes.get(i);
+            Node end = ringNodes.get((i + 1) % ringNodes.size());
+            if (start.getCoor() == null || end.getCoor() == null) {
+                continue;
+            }
+
+            SegmentProjection projection = projectPointToSegment(clickPoint, start.getCoor(), end.getCoor());
+            if (projection == null || projection.distanceMeters() > CLICK_EDGE_TOLERANCE_METERS) {
+                continue;
+            }
+
+            Node endpoint = null;
+            if (distanceMeters(projection.projectedPoint(), start.getCoor()) <= CLICK_NODE_TOLERANCE_METERS) {
+                endpoint = start;
+            } else if (distanceMeters(projection.projectedPoint(), end.getCoor()) <= CLICK_NODE_TOLERANCE_METERS) {
+                endpoint = end;
+            }
+
+            candidates.add(new SegmentCandidate(i, projection.projectedPoint(), projection.distanceMeters(), endpoint));
+        }
+        return candidates;
+    }
+
+    private SegmentProjection projectPointToSegment(LatLon point, LatLon start, LatLon end) {
+        if (point == null || start == null || end == null) {
+            return null;
+        }
+
+        if (ProjectionRegistry.getProjection() != null) {
+            EastNorth p = ProjectionRegistry.getProjection().latlon2eastNorth(point);
+            EastNorth a = ProjectionRegistry.getProjection().latlon2eastNorth(start);
+            EastNorth b = ProjectionRegistry.getProjection().latlon2eastNorth(end);
+            if (p != null && a != null && b != null) {
+                return projectPointToSegmentProjected(p.east(), p.north(), a.east(), a.north(), b.east(), b.north(), true);
+            }
+        }
+
+        double referenceLatRad = Math.toRadians(start.lat());
+        XY p = toLocalMeters(point, referenceLatRad);
+        XY a = toLocalMeters(start, referenceLatRad);
+        XY b = toLocalMeters(end, referenceLatRad);
+        return projectPointToSegmentProjected(p.x, p.y, a.x, a.y, b.x, b.y, false);
+    }
+
+    private SegmentProjection projectPointToSegmentProjected(
+        double px,
+        double py,
+        double ax,
+        double ay,
+        double bx,
+        double by,
+        boolean projected
+    ) {
+        double abx = bx - ax;
+        double aby = by - ay;
+        double abSquared = (abx * abx) + (aby * aby);
+        if (abSquared <= CLICK_EPSILON) {
+            return null;
+        }
+
+        double t = ((px - ax) * abx + (py - ay) * aby) / abSquared;
+        t = Math.max(0.0, Math.min(1.0, t));
+
+        double closestX = ax + (t * abx);
+        double closestY = ay + (t * aby);
+        double distance = Math.hypot(px - closestX, py - closestY);
+
+        LatLon projectedPoint;
+        if (projected && ProjectionRegistry.getProjection() != null) {
+            projectedPoint = ProjectionRegistry.getProjection().eastNorth2latlon(new EastNorth(closestX, closestY));
+        } else {
+            projectedPoint = new LatLon(closestY / EARTH_RADIUS_METERS * (180.0 / Math.PI),
+                closestX / EARTH_RADIUS_METERS * (180.0 / Math.PI));
+        }
+
+        if (projectedPoint == null || !projectedPoint.isValid()) {
+            return null;
+        }
+        return new SegmentProjection(projectedPoint, distance);
+    }
+
+    private void performClickSplit(DataSet dataSet, Way way, Node firstNode, SecondClickResolution second) {
+        int undoStartSize = UndoRedoHandler.getInstance().getUndoCommands().size();
+        Node secondNode = second.existingNode();
+        List<Node> updatedNodes = new ArrayList<>(way.getNodes());
+
+        if (second.intersectionToInsert() != null) {
+            List<IntersectionPoint> intersections = new ArrayList<>();
+            intersections.add(second.intersectionToInsert());
+            SplitNodePreparationService.PreparedIntersectionNodes prepared =
+                splitNodePreparationService.prepareIntersectionNodes(dataSet, way, intersections);
+
+            if (prepared.getSplitNodes().size() != 1) {
+                rollbackToUndoSize(undoStartSize);
+                showError(tr("Failed to resolve the second split point on the selected edge."));
+                return;
+            }
+
+            if (!prepared.getCommands().isEmpty()) {
+                UndoRedoHandler.getInstance().add(
+                    new SequenceCommand(tr("Insert split point on building edge"), prepared.getCommands())
+                );
+            }
+
+            secondNode = prepared.getSplitNodes().get(0);
+            updatedNodes = prepared.getUpdatedWayNodes();
+        }
+
+        if (secondNode == null) {
+            rollbackToUndoSize(undoStartSize);
+            showError(tr("Failed to resolve a valid second split point."));
+            return;
+        }
+
+        if (firstNode.equals(secondNode)) {
+            rollbackToUndoSize(undoStartSize);
+            showError(tr("Please choose two different split points."));
+            return;
+        }
+
+        if (splitNodePreparationService.areAdjacentInClosedNodeList(updatedNodes, firstNode, secondNode)) {
+            rollbackToUndoSize(undoStartSize);
+            showError(tr("Selected split points are adjacent. Please choose points on different edges."));
+            return;
+        }
+
+        List<OsmPrimitive> splitSelection = new ArrayList<>();
+        splitSelection.add(way);
+        splitSelection.add(firstNode);
+        splitSelection.add(secondNode);
+        dataSet.setSelected(splitSelection);
+
+        SplitResult result = splitService.splitSelectedBuilding(dataSet);
+        if (!result.isSuccess()) {
+            rollbackToUndoSize(undoStartSize);
+            showError(result.getMessage());
+            return;
+        }
+
+        if (!result.getCreatedWays().isEmpty()) {
+            dataSet.setSelected(result.getCreatedWays());
+        }
+        clearClickSelection();
+    }
+
+    private void rollbackToUndoSize(int undoStartSize) {
+        int undoCount = UndoRedoHandler.getInstance().getUndoCommands().size() - undoStartSize;
+        if (undoCount > 0) {
+            UndoRedoHandler.getInstance().undo(undoCount);
+        }
+    }
+
+    private void clearClickSelection() {
+        clickFirstWay = null;
+        clickFirstNode = null;
+        clickSecondPreviewNode = null;
+        clickSecondPreviewPoint = null;
+    }
+
+    private <T> boolean isAmbiguousByDistance(double bestDistance, List<T> candidates, java.util.function.ToDoubleFunction<T> distanceFn) {
+        if (candidates.size() < 2) {
+            return false;
+        }
+        double secondDistance = distanceFn.applyAsDouble(candidates.get(1));
+        return Math.abs(secondDistance - bestDistance) <= CLICK_AMBIGUITY_DELTA_METERS;
     }
 
     private void handleAutoSplitClick(MouseEvent e) {
@@ -483,7 +823,7 @@ public class SplitBuildingMapMode extends MapMode {
     }
 
     private void updateSnapFeedback() {
-        snapCandidate = null;
+        snapCandidates.clear();
         if (dragStart == null || dragCurrent == null || !snappingEnabled) {
             return;
         }
@@ -504,7 +844,7 @@ public class SplitBuildingMapMode extends MapMode {
             return;
         }
 
-        snapCandidate = findNearestCornerCandidate(targetWay, dragStart, dragCurrent);
+        snapCandidates = findNearestCornerCandidates(targetWay, dragStart, dragCurrent);
     }
 
     private Way resolveSnapTargetWay(DataSet dataSet, LatLon lineStart, LatLon lineEnd) {
@@ -557,26 +897,32 @@ public class SplitBuildingMapMode extends MapMode {
         return way;
     }
 
-    private Node findNearestCornerCandidate(Way way, LatLon lineStart, LatLon lineEnd) {
+    private List<Node> findNearestCornerCandidates(Way way, LatLon lineStart, LatLon lineEnd) {
         List<Node> ringNodes = new ArrayList<>(way.getNodes());
         if (ringNodes.size() > 1 && ringNodes.get(0).equals(ringNodes.get(ringNodes.size() - 1))) {
             ringNodes.remove(ringNodes.size() - 1);
         }
 
-        Node nearest = null;
-        double nearestDistance = Double.POSITIVE_INFINITY;
+        List<NodeDistance> nearby = new ArrayList<>();
         for (Node node : ringNodes) {
             if (node.getCoor() == null) {
                 continue;
             }
 
             double distance = pointToSegmentDistanceMeters(node.getCoor(), lineStart, lineEnd);
-            if (distance <= SNAP_FEEDBACK_CORNER_DISTANCE_METERS && distance < nearestDistance) {
-                nearest = node;
-                nearestDistance = distance;
+            if (distance <= SNAP_FEEDBACK_CORNER_DISTANCE_METERS) {
+                nearby.add(new NodeDistance(node, distance));
             }
         }
-        return nearest;
+
+        nearby.sort(Comparator
+            .comparingDouble(NodeDistance::distance)
+            .thenComparingLong(nd -> nd.node().getUniqueId()));
+
+        return nearby.stream()
+            .limit(2)
+            .map(NodeDistance::node)
+            .collect(Collectors.toList());
     }
 
     private double distanceMeters(LatLon first, LatLon second) {
@@ -644,11 +990,22 @@ public class SplitBuildingMapMode extends MapMode {
         return new XY(x, y);
     }
 
-    private void resetState() {
+    private LatLon fromLocalMeters(XY point, double referenceLatRad) {
+        double lat = Math.toDegrees(point.y / EARTH_RADIUS_METERS);
+        double lon = Math.toDegrees(point.x / (EARTH_RADIUS_METERS * Math.cos(referenceLatRad)));
+        return new LatLon(lat, lon);
+    }
+
+    private void resetDragState() {
         dragStart = null;
         dragCurrent = null;
-        snapCandidate = null;
+        snapCandidates.clear();
         snappingEnabled = false;
+    }
+
+    private void resetState() {
+        resetDragState();
+        clearClickSelection();
     }
 
     private void repaintMapView() {
@@ -762,6 +1119,102 @@ public class SplitBuildingMapMode extends MapMode {
         }
     }
 
+    private static final class FirstClickSelection {
+        private final Way way;
+        private final Node node;
+        private final double distance;
+
+        private FirstClickSelection(Way way, Node node, double distance) {
+            this.way = way;
+            this.node = node;
+            this.distance = distance;
+        }
+
+        private Way way() {
+            return way;
+        }
+
+        private Node node() {
+            return node;
+        }
+
+        private double distance() {
+            return distance;
+        }
+    }
+
+    private static final class SegmentProjection {
+        private final LatLon projectedPoint;
+        private final double distanceMeters;
+
+        private SegmentProjection(LatLon projectedPoint, double distanceMeters) {
+            this.projectedPoint = projectedPoint;
+            this.distanceMeters = distanceMeters;
+        }
+
+        private LatLon projectedPoint() {
+            return projectedPoint;
+        }
+
+        private double distanceMeters() {
+            return distanceMeters;
+        }
+    }
+
+    private static final class SegmentCandidate {
+        private final int segmentIndex;
+        private final LatLon projectedPoint;
+        private final double distance;
+        private final Node existingEndpoint;
+
+        private SegmentCandidate(int segmentIndex, LatLon projectedPoint, double distance, Node existingEndpoint) {
+            this.segmentIndex = segmentIndex;
+            this.projectedPoint = projectedPoint;
+            this.distance = distance;
+            this.existingEndpoint = existingEndpoint;
+        }
+
+        private int segmentIndex() {
+            return segmentIndex;
+        }
+
+        private LatLon projectedPoint() {
+            return projectedPoint;
+        }
+
+        private double distance() {
+            return distance;
+        }
+
+        private Node existingEndpoint() {
+            return existingEndpoint;
+        }
+    }
+
+    private static final class SecondClickResolution {
+        private final Node existingNode;
+        private final IntersectionPoint intersectionToInsert;
+        private final LatLon coordinate;
+
+        private SecondClickResolution(Node existingNode, IntersectionPoint intersectionToInsert, LatLon coordinate) {
+            this.existingNode = existingNode;
+            this.intersectionToInsert = intersectionToInsert;
+            this.coordinate = coordinate;
+        }
+
+        private Node existingNode() {
+            return existingNode;
+        }
+
+        private IntersectionPoint intersectionToInsert() {
+            return intersectionToInsert;
+        }
+
+        private LatLon coordinate() {
+            return coordinate;
+        }
+    }
+
     private static final class XY {
         private final double x;
         private final double y;
@@ -769,6 +1222,24 @@ public class SplitBuildingMapMode extends MapMode {
         private XY(double x, double y) {
             this.x = x;
             this.y = y;
+        }
+    }
+
+    private static final class NodeDistance {
+        private final Node node;
+        private final double distance;
+
+        private NodeDistance(Node node, double distance) {
+            this.node = node;
+            this.distance = distance;
+        }
+
+        private Node node() {
+            return node;
+        }
+
+        private double distance() {
+            return distance;
         }
     }
 
@@ -789,7 +1260,33 @@ public class SplitBuildingMapMode extends MapMode {
             g.setStroke(new BasicStroke(2.0f));
             g.drawLine(startPoint.x, startPoint.y, currentPoint.x, currentPoint.y);
 
-            if (snapCandidate != null && snapCandidate.getCoor() != null) {
+            if (clickFirstNode != null && clickFirstNode.getCoor() != null) {
+                Point firstPoint = mapView.getPoint(clickFirstNode.getCoor());
+                if (firstPoint != null) {
+                    int radius = 10;
+                    g.setColor(new Color(245, 170, 60, 220));
+                    g.setStroke(new BasicStroke(2.5f));
+                    g.drawOval(firstPoint.x - radius, firstPoint.y - radius, radius * 2, radius * 2);
+                }
+            }
+
+            LatLon secondPreview = clickSecondPreviewNode != null && clickSecondPreviewNode.getCoor() != null
+                ? clickSecondPreviewNode.getCoor()
+                : clickSecondPreviewPoint;
+            if (secondPreview != null) {
+                Point secondPoint = mapView.getPoint(secondPreview);
+                if (secondPoint != null) {
+                    int radius = 8;
+                    g.setColor(new Color(255, 220, 90, 210));
+                    g.setStroke(new BasicStroke(2.0f));
+                    g.drawOval(secondPoint.x - radius, secondPoint.y - radius, radius * 2, radius * 2);
+                }
+            }
+
+            for (Node snapCandidate : snapCandidates) {
+                if (snapCandidate == null || snapCandidate.getCoor() == null) {
+                    continue;
+                }
                 Point snapPoint = mapView.getPoint(snapCandidate.getCoor());
                 if (snapPoint != null) {
                     int radius = 9;
