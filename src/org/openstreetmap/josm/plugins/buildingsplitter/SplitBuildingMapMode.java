@@ -12,6 +12,8 @@ import java.awt.Point;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 
 import javax.swing.JOptionPane;
@@ -35,6 +37,10 @@ import org.openstreetmap.josm.tools.Shortcut;
 public class SplitBuildingMapMode extends MapMode {
 
     private static final double CLICK_EPSILON = 1e-9;
+    private static final Cursor MANUAL_CURSOR = Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR);
+    private static final Cursor AUTOSPLIT_CURSOR = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR);
+    private static final String MANUAL_MODE_TOOLTIP = tr("Manual split mode: drag a line across one building");
+    private static final String AUTOSPLIT_MODE_TOOLTIP = tr("AutoSplit mode (Ctrl): click inside a building");
     private static final Shortcut SPLIT_BUILDING_SHORTCUT = Shortcut.registerShortcut(
         "mapmode:buildingsplitter:splitbuilding",
         tr("Map mode: {0}", tr("Split Building")),
@@ -45,10 +51,21 @@ public class SplitBuildingMapMode extends MapMode {
     private final BuildingSplitService splitService;
     private final BuildingIntersectionService intersectionService;
     private final SplitNodePreparationService splitNodePreparationService;
+    private final AutoSplitBuildingService autoSplitService;
+    private final AutoSplitOptionsDialog autoSplitOptionsDialog;
+    private final HouseNumberService houseNumberService;
     private final PreviewLinePaintable previewLinePaintable;
 
     private LatLon dragStart;
     private LatLon dragCurrent;
+    private boolean ctrlAutoSplitMode;
+
+    private int lastAutoSplitParts = 2;
+    private int lastAutoSplitIncrement = 1;
+    private boolean lastAutoSplitReverseOrder;
+    private boolean lastAutoSplitFirstWithoutLetter;
+    private String lastAutoSplitStartHouseNumber = "";
+
     private KeyEventDispatcher escKeyDispatcher;
 
     public SplitBuildingMapMode() {
@@ -57,11 +74,14 @@ public class SplitBuildingMapMode extends MapMode {
             "buildingsplitter",
             tr("Drag a line across a building to split it"),
             SPLIT_BUILDING_SHORTCUT,
-            Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR)
+            MANUAL_CURSOR
         );
         this.splitService = new BuildingSplitService();
         this.intersectionService = new BuildingIntersectionService();
         this.splitNodePreparationService = new SplitNodePreparationService();
+        this.autoSplitService = new AutoSplitBuildingService();
+        this.autoSplitOptionsDialog = new AutoSplitOptionsDialog();
+        this.houseNumberService = new HouseNumberService();
         this.previewLinePaintable = new PreviewLinePaintable();
         putValue(SMALL_ICON, ImageProvider.get("mapmode", "buildingsplitter"));
         putValue(LARGE_ICON_KEY, ImageProvider.get("mapmode", "buildingsplitter"));
@@ -75,6 +95,8 @@ public class SplitBuildingMapMode extends MapMode {
             MainApplication.getMap().mapView.addMouseListener(this);
             MainApplication.getMap().mapView.addMouseMotionListener(this);
             MainApplication.getMap().mapView.addTemporaryLayer(previewLinePaintable);
+            updateTemporaryMode(false);
+            updateMapModeTooltip();
         }
     }
 
@@ -85,6 +107,7 @@ public class SplitBuildingMapMode extends MapMode {
             MainApplication.getMap().mapView.removeMouseListener(this);
             MainApplication.getMap().mapView.removeMouseMotionListener(this);
             MainApplication.getMap().mapView.removeTemporaryLayer(previewLinePaintable);
+            MainApplication.getMap().mapView.setToolTipText(null);
             MainApplication.getMap().mapView.repaint();
         }
         super.exitMode();
@@ -93,6 +116,13 @@ public class SplitBuildingMapMode extends MapMode {
     @Override
     public void mousePressed(MouseEvent e) {
         if (e.getButton() != MouseEvent.BUTTON1) {
+            return;
+        }
+
+        updateTemporaryMode(e.isControlDown());
+        if (ctrlAutoSplitMode) {
+            resetState();
+            repaintMapView();
             return;
         }
 
@@ -117,6 +147,13 @@ public class SplitBuildingMapMode extends MapMode {
 
     @Override
     public void mouseDragged(MouseEvent e) {
+        updateTemporaryMode(e.isControlDown());
+        if (ctrlAutoSplitMode) {
+            resetState();
+            repaintMapView();
+            return;
+        }
+
         if (dragStart == null) {
             return;
         }
@@ -132,7 +169,21 @@ public class SplitBuildingMapMode extends MapMode {
 
     @Override
     public void mouseReleased(MouseEvent e) {
-        if (e.getButton() != MouseEvent.BUTTON1 || dragStart == null) {
+        updateTemporaryMode(e.isControlDown());
+        if (e.getButton() != MouseEvent.BUTTON1) {
+            resetState();
+            repaintMapView();
+            return;
+        }
+
+        if (ctrlAutoSplitMode) {
+            handleAutoSplitClick(e);
+            resetState();
+            repaintMapView();
+            return;
+        }
+
+        if (dragStart == null) {
             resetState();
             repaintMapView();
             return;
@@ -165,6 +216,139 @@ public class SplitBuildingMapMode extends MapMode {
         finishSplit(dataSet, dragStart, dragCurrent);
         resetState();
         repaintMapView();
+    }
+
+    private void handleAutoSplitClick(MouseEvent e) {
+        DataSet dataSet = MainApplication.getLayerManager().getEditDataSet();
+        if (dataSet == null) {
+            showError(tr("No editable dataset is available."));
+            return;
+        }
+
+        LatLon clickPoint = toLatLon(e);
+        if (!isValidClickedPoint(clickPoint)) {
+            showError(tr("Unable to read clicked map location. Please click inside the map view."));
+            return;
+        }
+
+        Way clickedBuilding = findSingleClickedBuilding(dataSet, clickPoint);
+        if (clickedBuilding == null) {
+            return;
+        }
+
+        openAutoSplitDialogForBuilding(dataSet, clickedBuilding);
+    }
+
+    private Way findSingleClickedBuilding(DataSet dataSet, LatLon clickPoint) {
+        List<Way> containingBuildings = new ArrayList<>();
+
+        for (Way way : dataSet.getWays()) {
+            if (way == null || way.isDeleted() || !way.isClosed() || !way.hasKey("building")) {
+                continue;
+            }
+            if (containsPoint(way, clickPoint)) {
+                containingBuildings.add(way);
+            }
+        }
+
+        if (containingBuildings.isEmpty()) {
+            showError(tr("No building found at the clicked location."));
+            return null;
+        }
+
+        if (containingBuildings.size() > 1) {
+            containingBuildings.sort(Comparator.comparingLong(Way::getUniqueId));
+            showError(tr("Multiple buildings match this click. Please click a less ambiguous location."));
+            return null;
+        }
+
+        return containingBuildings.get(0);
+    }
+
+    private boolean containsPoint(Way way, LatLon point) {
+        List<Node> nodes = new ArrayList<>(way.getNodes());
+        if (nodes.size() < 4) {
+            return false;
+        }
+
+        if (nodes.get(0).equals(nodes.get(nodes.size() - 1))) {
+            nodes.remove(nodes.size() - 1);
+        }
+        if (nodes.size() < 3) {
+            return false;
+        }
+
+        double testX = point.lon();
+        double testY = point.lat();
+        boolean inside = false;
+
+        int j = nodes.size() - 1;
+        for (int i = 0; i < nodes.size(); i++) {
+            Node current = nodes.get(i);
+            Node previous = nodes.get(j);
+            if (current.getCoor() == null || previous.getCoor() == null) {
+                j = i;
+                continue;
+            }
+
+            double xi = current.lon();
+            double yi = current.lat();
+            double xj = previous.lon();
+            double yj = previous.lat();
+
+            boolean intersects = ((yi > testY) != (yj > testY))
+                && (testX < ((xj - xi) * (testY - yi) / (yj - yi + CLICK_EPSILON)) + xi);
+            if (intersects) {
+                inside = !inside;
+            }
+            j = i;
+        }
+
+        return inside;
+    }
+
+    private void openAutoSplitDialogForBuilding(DataSet dataSet, Way buildingWay) {
+        dataSet.setSelected(Collections.singleton(buildingWay));
+        AutoSplitPreviewSession previewSession = new AutoSplitPreviewSession(
+            dataSet,
+            buildingWay,
+            autoSplitService,
+            houseNumberService
+        );
+
+        AutoSplitDialogResult dialogResult = autoSplitOptionsDialog.showDialog(
+            MainApplication.getMainFrame(),
+            lastAutoSplitParts,
+            lastAutoSplitIncrement,
+            lastAutoSplitReverseOrder,
+            lastAutoSplitFirstWithoutLetter,
+            lastAutoSplitStartHouseNumber,
+            previewSession::refreshPreview
+        );
+
+        if (dialogResult.isCancel() || dialogResult.isSkip()) {
+            previewSession.undoPreview();
+            return;
+        }
+
+        SplitResult result = previewSession.finalizePreview(dialogResult);
+        if (!result.isSuccess()) {
+            previewSession.undoPreview();
+            showError(result.getMessage());
+            return;
+        }
+
+        lastAutoSplitParts = dialogResult.getParts();
+        lastAutoSplitIncrement = dialogResult.getIncrement();
+        lastAutoSplitReverseOrder = dialogResult.isReverseOrder();
+        lastAutoSplitFirstWithoutLetter = dialogResult.isFirstWithoutLetter();
+        lastAutoSplitStartHouseNumber = dialogResult.getStartHouseNumber();
+
+        List<Way> createdWays = result.getCreatedWays();
+        if (!createdWays.isEmpty()) {
+            dataSet.setSelected(createdWays);
+        }
+        Logging.info("SplitBuildingMapMode (Ctrl AutoSplit): " + result.getMessage());
     }
 
     private LatLon toLatLon(MouseEvent e) {
@@ -293,11 +477,20 @@ public class SplitBuildingMapMode extends MapMode {
         }
 
         escKeyDispatcher = event -> {
-            if (event.getID() != KeyEvent.KEY_PRESSED || event.getKeyCode() != KeyEvent.VK_ESCAPE) {
+            if (!isActiveMapMode()) {
                 return false;
             }
 
-            if (!isActiveMapMode()) {
+            if (event.getKeyCode() == KeyEvent.VK_CONTROL) {
+                if (event.getID() == KeyEvent.KEY_PRESSED) {
+                    updateTemporaryMode(true);
+                } else if (event.getID() == KeyEvent.KEY_RELEASED) {
+                    updateTemporaryMode(false);
+                }
+                return false;
+            }
+
+            if (event.getID() != KeyEvent.KEY_PRESSED || event.getKeyCode() != KeyEvent.VK_ESCAPE) {
                 return false;
             }
 
@@ -323,10 +516,37 @@ public class SplitBuildingMapMode extends MapMode {
 
     private void handleEscapePressed() {
         resetState();
+        updateTemporaryMode(false);
         repaintMapView();
         if (MainApplication.getMap() != null) {
             MainApplication.getMap().selectSelectTool(false);
         }
+    }
+
+    private void updateTemporaryMode(boolean ctrlPressed) {
+        if (ctrlAutoSplitMode == ctrlPressed) {
+            return;
+        }
+        ctrlAutoSplitMode = ctrlPressed;
+        if (ctrlAutoSplitMode) {
+            resetState();
+        }
+        updateMapCursor();
+        updateMapModeTooltip();
+    }
+
+    private void updateMapCursor() {
+        if (MainApplication.getMap() == null || MainApplication.getMap().mapView == null) {
+            return;
+        }
+        MainApplication.getMap().mapView.setCursor(ctrlAutoSplitMode ? AUTOSPLIT_CURSOR : MANUAL_CURSOR);
+    }
+
+    private void updateMapModeTooltip() {
+        if (MainApplication.getMap() == null || MainApplication.getMap().mapView == null) {
+            return;
+        }
+        MainApplication.getMap().mapView.setToolTipText(ctrlAutoSplitMode ? AUTOSPLIT_MODE_TOOLTIP : MANUAL_MODE_TOOLTIP);
     }
 
     private void showError(String message) {
