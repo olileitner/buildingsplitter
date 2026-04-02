@@ -9,11 +9,13 @@ import java.util.List;
 import org.openstreetmap.josm.actions.OrthogonalizeAction;
 import org.openstreetmap.josm.command.SequenceCommand;
 import org.openstreetmap.josm.data.UndoRedoHandler;
+import org.openstreetmap.josm.data.coor.EastNorth;
 import org.openstreetmap.josm.data.coor.LatLon;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Node;
 import org.openstreetmap.josm.data.osm.OsmPrimitive;
 import org.openstreetmap.josm.data.osm.Way;
+import org.openstreetmap.josm.data.projection.ProjectionRegistry;
 import org.openstreetmap.josm.tools.Logging;
 
 public class AutoSplitBuildingService {
@@ -260,13 +262,23 @@ public class AutoSplitBuildingService {
     }
 
     private double projectOnAxis(Node node, Vector2D axis) {
-        return (node.lon() * axis.x()) + (node.lat() * axis.y());
+        EastNorth eastNorth = toEastNorth(node);
+        if (eastNorth == null) {
+            return Double.NaN;
+        }
+        return (eastNorth.east() * axis.x()) + (eastNorth.north() * axis.y());
     }
 
     private LatLon interpolate(Node start, Node end, double t) {
-        double lat = start.lat() + ((end.lat() - start.lat()) * t);
-        double lon = start.lon() + ((end.lon() - start.lon()) * t);
-        return new LatLon(lat, lon);
+        EastNorth startEn = toEastNorth(start);
+        EastNorth endEn = toEastNorth(end);
+        if (startEn == null || endEn == null) {
+            return null;
+        }
+
+        double east = startEn.east() + ((endEn.east() - startEn.east()) * t);
+        double north = startEn.north() + ((endEn.north() - startEn.north()) * t);
+        return toLatLon(new EastNorth(east, north));
     }
 
     private boolean isSamePoint(LatLon first, LatLon second) {
@@ -372,15 +384,16 @@ public class AutoSplitBuildingService {
             nodes.remove(nodes.size() - 1);
         }
 
-        double latSum = 0.0;
-        double lonSum = 0.0;
+        double eastSum = 0.0;
+        double northSum = 0.0;
         int count = 0;
         for (Node node : nodes) {
-            if (node.getCoor() == null) {
+            EastNorth eastNorth = toEastNorth(node);
+            if (eastNorth == null) {
                 continue;
             }
-            latSum += node.lat();
-            lonSum += node.lon();
+            eastSum += eastNorth.east();
+            northSum += eastNorth.north();
             count++;
         }
 
@@ -388,9 +401,9 @@ public class AutoSplitBuildingService {
             return 0.0;
         }
 
-        double centerLat = latSum / count;
-        double centerLon = lonSum / count;
-        return (centerLon * axis.x()) + (centerLat * axis.y());
+        double centerEast = eastSum / count;
+        double centerNorth = northSum / count;
+        return (centerEast * axis.x()) + (centerNorth * axis.y());
     }
 
     private List<Node> extractFourCorners(Way buildingWay) {
@@ -444,8 +457,16 @@ public class AutoSplitBuildingService {
             return null;
         }
 
-        double centerLat = (a.lat() + b.lat() + c.lat() + d.lat()) / 4.0;
-        double centerLon = (a.lon() + b.lon() + c.lon() + d.lon()) / 4.0;
+        EastNorth aEn = toEastNorth(a);
+        EastNorth bEn = toEastNorth(b);
+        EastNorth cEn = toEastNorth(c);
+        EastNorth dEn = toEastNorth(d);
+        if (aEn == null || bEn == null || cEn == null || dEn == null) {
+            return null;
+        }
+
+        double centerEast = (aEn.east() + bEn.east() + cEn.east() + dEn.east()) / 4.0;
+        double centerNorth = (aEn.north() + bEn.north() + cEn.north() + dEn.north()) / 4.0;
 
         Vector2D perpendicular = mainAxis.perpendicular().normalize();
         if (perpendicular.length() <= EPSILON) {
@@ -455,7 +476,7 @@ public class AutoSplitBuildingService {
         double maxEdgeLength = Math.max(Math.max(ab.length(), bc.length()), Math.max(cd.length(), da.length()));
         double halfLineLength = Math.max(maxEdgeLength * 2.0, EPSILON);
 
-        return new SplitGeometry(centerLat, centerLon, mainAxis, perpendicular, halfLineLength);
+        return new SplitGeometry(centerEast, centerNorth, mainAxis, perpendicular, halfLineLength);
     }
 
     private Vector2D averageAlignedDirections(Vector2D first, Vector2D second) {
@@ -474,51 +495,78 @@ public class AutoSplitBuildingService {
     }
 
     private Line createAutoSplitLine(SplitGeometry geometry, double axisPosition) {
-        double centerProjection = (geometry.centerLon() * geometry.mainAxis().x()) + (geometry.centerLat() * geometry.mainAxis().y());
+        double centerProjection = (geometry.centerEast() * geometry.mainAxis().x()) + (geometry.centerNorth() * geometry.mainAxis().y());
         double alongAxisOffset = axisPosition - centerProjection;
 
-        double lineCenterLon = geometry.centerLon() + (geometry.mainAxis().x() * alongAxisOffset);
-        double lineCenterLat = geometry.centerLat() + (geometry.mainAxis().y() * alongAxisOffset);
+        double lineCenterEast = geometry.centerEast() + (geometry.mainAxis().x() * alongAxisOffset);
+        double lineCenterNorth = geometry.centerNorth() + (geometry.mainAxis().y() * alongAxisOffset);
 
-        double startLat = lineCenterLat - (geometry.perpendicularDirection().y() * geometry.halfLineLength());
-        double startLon = lineCenterLon - (geometry.perpendicularDirection().x() * geometry.halfLineLength());
-        double endLat = lineCenterLat + (geometry.perpendicularDirection().y() * geometry.halfLineLength());
-        double endLon = lineCenterLon + (geometry.perpendicularDirection().x() * geometry.halfLineLength());
+        double startEast = lineCenterEast - (geometry.perpendicularDirection().x() * geometry.halfLineLength());
+        double startNorth = lineCenterNorth - (geometry.perpendicularDirection().y() * geometry.halfLineLength());
+        double endEast = lineCenterEast + (geometry.perpendicularDirection().x() * geometry.halfLineLength());
+        double endNorth = lineCenterNorth + (geometry.perpendicularDirection().y() * geometry.halfLineLength());
 
-        return new Line(new LatLon(startLat, startLon), new LatLon(endLat, endLon));
+        LatLon start = toLatLon(new EastNorth(startEast, startNorth));
+        LatLon end = toLatLon(new EastNorth(endEast, endNorth));
+        return new Line(start, end);
     }
 
     private Vector2D vector(Node from, Node to) {
-        return new Vector2D(to.lon() - from.lon(), to.lat() - from.lat());
+        EastNorth fromEn = toEastNorth(from);
+        EastNorth toEn = toEastNorth(to);
+        if (fromEn == null || toEn == null) {
+            return new Vector2D(0.0, 0.0);
+        }
+        return new Vector2D(toEn.east() - fromEn.east(), toEn.north() - fromEn.north());
+    }
+
+    private EastNorth toEastNorth(Node node) {
+        if (node == null || node.getCoor() == null) {
+            return null;
+        }
+        if (ProjectionRegistry.getProjection() != null) {
+            return ProjectionRegistry.getProjection().latlon2eastNorth(node.getCoor());
+        }
+        return new EastNorth(node.lon(), node.lat());
+    }
+
+    private LatLon toLatLon(EastNorth eastNorth) {
+        if (eastNorth == null) {
+            return null;
+        }
+        if (ProjectionRegistry.getProjection() != null) {
+            return ProjectionRegistry.getProjection().eastNorth2latlon(eastNorth);
+        }
+        return new LatLon(eastNorth.north(), eastNorth.east());
     }
 
     private static final class SplitGeometry {
-        private final double centerLat;
-        private final double centerLon;
+        private final double centerEast;
+        private final double centerNorth;
         private final Vector2D mainAxis;
         private final Vector2D perpendicularDirection;
         private final double halfLineLength;
 
         private SplitGeometry(
-            double centerLat,
-            double centerLon,
+            double centerEast,
+            double centerNorth,
             Vector2D mainAxis,
             Vector2D perpendicularDirection,
             double halfLineLength
         ) {
-            this.centerLat = centerLat;
-            this.centerLon = centerLon;
+            this.centerEast = centerEast;
+            this.centerNorth = centerNorth;
             this.mainAxis = mainAxis;
             this.perpendicularDirection = perpendicularDirection;
             this.halfLineLength = halfLineLength;
         }
 
-        private double centerLat() {
-            return centerLat;
+        private double centerEast() {
+            return centerEast;
         }
 
-        private double centerLon() {
-            return centerLon;
+        private double centerNorth() {
+            return centerNorth;
         }
 
         private Vector2D mainAxis() {
