@@ -22,11 +22,13 @@ import org.openstreetmap.josm.actions.mapmode.MapMode;
 import org.openstreetmap.josm.command.SequenceCommand;
 import org.openstreetmap.josm.data.UndoRedoHandler;
 import org.openstreetmap.josm.data.Bounds;
+import org.openstreetmap.josm.data.coor.EastNorth;
 import org.openstreetmap.josm.data.coor.LatLon;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Node;
 import org.openstreetmap.josm.data.osm.OsmPrimitive;
 import org.openstreetmap.josm.data.osm.Way;
+import org.openstreetmap.josm.data.projection.ProjectionRegistry;
 import org.openstreetmap.josm.gui.MainApplication;
 import org.openstreetmap.josm.gui.MapView;
 import org.openstreetmap.josm.gui.layer.MapViewPaintable;
@@ -39,6 +41,9 @@ public class SplitBuildingMapMode extends MapMode {
     private static final double CLICK_EPSILON = 1e-9;
     private static final Cursor MANUAL_CURSOR = Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR);
     private static final Cursor AUTOSPLIT_CURSOR = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR);
+    private static final double SNAP_FEEDBACK_MAX_LINE_LENGTH_METERS = 1000.0;
+    private static final double SNAP_FEEDBACK_CORNER_DISTANCE_METERS = 0.40;
+    private static final double EARTH_RADIUS_METERS = 6_371_000.0;
     private static final String MANUAL_MODE_TOOLTIP = tr("Manual split mode: drag a line across one building");
     private static final String AUTOSPLIT_MODE_TOOLTIP = tr("AutoSplit mode (Ctrl): click inside a building");
     private static final Shortcut SPLIT_BUILDING_SHORTCUT = Shortcut.registerShortcut(
@@ -58,6 +63,10 @@ public class SplitBuildingMapMode extends MapMode {
 
     private LatLon dragStart;
     private LatLon dragCurrent;
+    private Node snapCandidate;
+    private boolean snappingEnabled;
+    private Way snapTargetWay;
+    private boolean snapTargetResolved;
     private boolean ctrlAutoSplitMode;
 
     private int lastAutoSplitParts = 2;
@@ -142,6 +151,10 @@ public class SplitBuildingMapMode extends MapMode {
 
         dragStart = start;
         dragCurrent = start;
+        snappingEnabled = true;
+        snapCandidate = null;
+        snapTargetWay = null;
+        snapTargetResolved = false;
         repaintMapView();
     }
 
@@ -164,6 +177,7 @@ public class SplitBuildingMapMode extends MapMode {
         }
 
         dragCurrent = current;
+        updateSnapFeedback();
         repaintMapView();
     }
 
@@ -472,9 +486,165 @@ public class SplitBuildingMapMode extends MapMode {
             && Math.abs(first.lon() - second.lon()) <= CLICK_EPSILON;
     }
 
+    private void updateSnapFeedback() {
+        snapCandidate = null;
+        if (dragStart == null || dragCurrent == null || !snappingEnabled) {
+            return;
+        }
+
+        double lineLengthMeters = distanceMeters(dragStart, dragCurrent);
+        if (lineLengthMeters > SNAP_FEEDBACK_MAX_LINE_LENGTH_METERS) {
+            snappingEnabled = false;
+            return;
+        }
+
+        DataSet dataSet = MainApplication.getLayerManager().getEditDataSet();
+        if (dataSet == null) {
+            return;
+        }
+
+        Way targetWay = resolveSnapTargetWay(dataSet);
+        if (targetWay == null) {
+            return;
+        }
+
+        snapCandidate = findNearestCornerCandidate(targetWay, dragStart, dragCurrent);
+    }
+
+    private Way resolveSnapTargetWay(DataSet dataSet) {
+        if (snapTargetResolved) {
+            return snapTargetWay;
+        }
+        snapTargetResolved = true;
+
+        Way selectedBuilding = getSingleSelectedBuilding(dataSet);
+        if (selectedBuilding != null) {
+            snapTargetWay = selectedBuilding;
+            return snapTargetWay;
+        }
+
+        List<Way> containing = new ArrayList<>();
+        for (Way way : dataSet.getWays()) {
+            if (way == null || way.isDeleted() || !way.isClosed() || !way.hasKey("building")) {
+                continue;
+            }
+            if (containsPoint(way, dragStart)) {
+                containing.add(way);
+            }
+        }
+
+        if (containing.size() == 1) {
+            snapTargetWay = containing.get(0);
+        }
+        return snapTargetWay;
+    }
+
+    private Way getSingleSelectedBuilding(DataSet dataSet) {
+        List<Way> selectedWays = new ArrayList<>(dataSet.getSelectedWays());
+        if (selectedWays.size() != 1) {
+            return null;
+        }
+        Way way = selectedWays.get(0);
+        if (way.isDeleted() || !way.isClosed() || !way.hasKey("building")) {
+            return null;
+        }
+        return way;
+    }
+
+    private Node findNearestCornerCandidate(Way way, LatLon lineStart, LatLon lineEnd) {
+        List<Node> ringNodes = new ArrayList<>(way.getNodes());
+        if (ringNodes.size() > 1 && ringNodes.get(0).equals(ringNodes.get(ringNodes.size() - 1))) {
+            ringNodes.remove(ringNodes.size() - 1);
+        }
+
+        Node nearest = null;
+        double nearestDistance = Double.POSITIVE_INFINITY;
+        for (Node node : ringNodes) {
+            if (node.getCoor() == null) {
+                continue;
+            }
+
+            double distance = pointToSegmentDistanceMeters(node.getCoor(), lineStart, lineEnd);
+            if (distance <= SNAP_FEEDBACK_CORNER_DISTANCE_METERS && distance < nearestDistance) {
+                nearest = node;
+                nearestDistance = distance;
+            }
+        }
+        return nearest;
+    }
+
+    private double distanceMeters(LatLon first, LatLon second) {
+        if (first == null || second == null) {
+            return Double.POSITIVE_INFINITY;
+        }
+
+        if (ProjectionRegistry.getProjection() != null) {
+            EastNorth firstEn = ProjectionRegistry.getProjection().latlon2eastNorth(first);
+            EastNorth secondEn = ProjectionRegistry.getProjection().latlon2eastNorth(second);
+            if (firstEn != null && secondEn != null) {
+                return firstEn.distance(secondEn);
+            }
+        }
+
+        return distanceMetersFallback(first, second);
+    }
+
+    private double pointToSegmentDistanceMeters(LatLon point, LatLon segmentStart, LatLon segmentEnd) {
+        if (point == null || segmentStart == null || segmentEnd == null) {
+            return Double.POSITIVE_INFINITY;
+        }
+
+        if (ProjectionRegistry.getProjection() != null) {
+            EastNorth p = ProjectionRegistry.getProjection().latlon2eastNorth(point);
+            EastNorth a = ProjectionRegistry.getProjection().latlon2eastNorth(segmentStart);
+            EastNorth b = ProjectionRegistry.getProjection().latlon2eastNorth(segmentEnd);
+            if (p != null && a != null && b != null) {
+                return pointToSegmentDistance(p.east(), p.north(), a.east(), a.north(), b.east(), b.north());
+            }
+        }
+
+        double referenceLatRad = Math.toRadians(segmentStart.lat());
+        XY p = toLocalMeters(point, referenceLatRad);
+        XY a = toLocalMeters(segmentStart, referenceLatRad);
+        XY b = toLocalMeters(segmentEnd, referenceLatRad);
+        return pointToSegmentDistance(p.x, p.y, a.x, a.y, b.x, b.y);
+    }
+
+    private double pointToSegmentDistance(double px, double py, double ax, double ay, double bx, double by) {
+        double abx = bx - ax;
+        double aby = by - ay;
+        double abSquared = (abx * abx) + (aby * aby);
+        if (abSquared <= CLICK_EPSILON) {
+            return Math.hypot(px - ax, py - ay);
+        }
+
+        double t = ((px - ax) * abx + (py - ay) * aby) / abSquared;
+        t = Math.max(0.0, Math.min(1.0, t));
+        double closestX = ax + (t * abx);
+        double closestY = ay + (t * aby);
+        return Math.hypot(px - closestX, py - closestY);
+    }
+
+    private double distanceMetersFallback(LatLon first, LatLon second) {
+        double referenceLatRad = Math.toRadians((first.lat() + second.lat()) / 2.0);
+        XY a = toLocalMeters(first, referenceLatRad);
+        XY b = toLocalMeters(second, referenceLatRad);
+        return Math.hypot(a.x - b.x, a.y - b.y);
+    }
+
+    private XY toLocalMeters(LatLon point, double referenceLatRad) {
+        double x = Math.toRadians(point.lon()) * EARTH_RADIUS_METERS * Math.cos(referenceLatRad);
+        double y = Math.toRadians(point.lat()) * EARTH_RADIUS_METERS;
+        return new XY(x, y);
+    }
+
     private void resetState() {
         dragStart = null;
         dragCurrent = null;
+        snapCandidate = null;
+        snappingEnabled = false;
+        snapTargetWay = null;
+        snapTargetResolved = false;
     }
 
     private void repaintMapView() {
@@ -588,6 +758,16 @@ public class SplitBuildingMapMode extends MapMode {
         }
     }
 
+    private static final class XY {
+        private final double x;
+        private final double y;
+
+        private XY(double x, double y) {
+            this.x = x;
+            this.y = y;
+        }
+    }
+
     private final class PreviewLinePaintable implements MapViewPaintable {
         @Override
         public void paint(Graphics2D g, MapView mapView, Bounds bounds) {
@@ -604,6 +784,16 @@ public class SplitBuildingMapMode extends MapMode {
             g.setColor(new Color(0, 120, 215));
             g.setStroke(new BasicStroke(2.0f));
             g.drawLine(startPoint.x, startPoint.y, currentPoint.x, currentPoint.y);
+
+            if (snapCandidate != null && snapCandidate.getCoor() != null) {
+                Point snapPoint = mapView.getPoint(snapCandidate.getCoor());
+                if (snapPoint != null) {
+                    int radius = 6;
+                    g.setColor(new Color(84, 180, 84, 210));
+                    g.setStroke(new BasicStroke(2.0f));
+                    g.drawOval(snapPoint.x - radius, snapPoint.y - radius, radius * 2, radius * 2);
+                }
+            }
         }
     }
 }
