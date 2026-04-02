@@ -5,13 +5,17 @@ import static org.openstreetmap.josm.tools.I18n.tr;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.openstreetmap.josm.data.coor.EastNorth;
 import org.openstreetmap.josm.data.coor.LatLon;
 import org.openstreetmap.josm.data.osm.Node;
 import org.openstreetmap.josm.data.osm.Way;
+import org.openstreetmap.josm.data.projection.ProjectionRegistry;
 
 public class BuildingIntersectionService {
 
     private static final double EPSILON = 1e-9;
+    private static final double ENDPOINT_SNAP_TOLERANCE_METERS = 0.30;
+    private static final double ENDPOINT_SNAP_TOLERANCE_DEGREES = 1e-7;
 
     public IntersectionResult findSplitIntersections(Way buildingWay, LatLon lineStart, LatLon lineEnd) {
         if (buildingWay == null) {
@@ -51,10 +55,12 @@ public class BuildingIntersectionService {
 
             LatLon intersectionCoordinate = segmentIntersection.intersection;
             Node existingNode = null;
-            if (isSamePoint(intersectionCoordinate, a)) {
+            if (isNearPoint(intersectionCoordinate, a)) {
                 existingNode = nodeA;
-            } else if (isSamePoint(intersectionCoordinate, b)) {
+                intersectionCoordinate = a;
+            } else if (isNearPoint(intersectionCoordinate, b)) {
                 existingNode = nodeB;
+                intersectionCoordinate = b;
             }
 
             IntersectionPoint candidate = new IntersectionPoint(
@@ -180,6 +186,24 @@ public class BuildingIntersectionService {
     private boolean isSamePoint(LatLon first, LatLon second) {
         return Math.abs(first.lat() - second.lat()) <= EPSILON
             && Math.abs(first.lon() - second.lon()) <= EPSILON;
+    }
+
+    private boolean isNearPoint(LatLon first, LatLon second) {
+        if (first == null || second == null) {
+            return false;
+        }
+
+        if (ProjectionRegistry.getProjection() != null) {
+            EastNorth firstEn = ProjectionRegistry.getProjection().latlon2eastNorth(first);
+            EastNorth secondEn = ProjectionRegistry.getProjection().latlon2eastNorth(second);
+            if (firstEn != null && secondEn != null) {
+                return firstEn.distance(secondEn) <= ENDPOINT_SNAP_TOLERANCE_METERS;
+            }
+        }
+
+        double latDiff = first.lat() - second.lat();
+        double lonDiff = first.lon() - second.lon();
+        return Math.hypot(latDiff, lonDiff) <= ENDPOINT_SNAP_TOLERANCE_DEGREES;
     }
 
     private List<IntersectionPoint> deduplicateIntersections(List<IntersectionPoint> intersections) {
