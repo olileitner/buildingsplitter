@@ -425,6 +425,7 @@ public class SplitBuildingMapMode extends MapMode {
 
     private SplitCandidate findUniqueSplitCandidate(DataSet dataSet, LatLon start, LatLon end) {
         List<SplitCandidate> candidates = new ArrayList<>();
+        List<String> targetedFailureMessages = new ArrayList<>();
 
         for (Way way : dataSet.getWays()) {
             if (way.isDeleted() || !way.isClosed() || !way.hasKey("building")) {
@@ -433,6 +434,9 @@ public class SplitBuildingMapMode extends MapMode {
 
             IntersectionResult intersectionResult = intersectionService.findSplitIntersections(way, start, end);
             if (!intersectionResult.isSuccess()) {
+                if (!isNoIntersectionFailure(intersectionResult) && intersectionResult.getMessage() != null) {
+                    targetedFailureMessages.add(intersectionResult.getMessage());
+                }
                 continue;
             }
 
@@ -443,6 +447,10 @@ public class SplitBuildingMapMode extends MapMode {
         }
 
         if (candidates.isEmpty()) {
+            if (targetedFailureMessages.size() == 1) {
+                showError(targetedFailureMessages.get(0));
+                return null;
+            }
             showError(tr("No building could be split with this line. Draw a line that crosses a single building."));
             return null;
         }
@@ -453,6 +461,10 @@ public class SplitBuildingMapMode extends MapMode {
         }
 
         return candidates.get(0);
+    }
+
+    private boolean isNoIntersectionFailure(IntersectionResult intersectionResult) {
+        return tr("Line does not intersect building").equals(intersectionResult.getMessage());
     }
 
     private boolean isSamePoint(LatLon first, LatLon second) {
