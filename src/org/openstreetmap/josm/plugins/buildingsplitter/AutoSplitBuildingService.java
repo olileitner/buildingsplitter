@@ -14,6 +14,7 @@ import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Node;
 import org.openstreetmap.josm.data.osm.OsmPrimitive;
 import org.openstreetmap.josm.data.osm.Way;
+import org.openstreetmap.josm.tools.Logging;
 
 public class AutoSplitBuildingService {
 
@@ -128,6 +129,8 @@ public class AutoSplitBuildingService {
     private SplitResult splitSingleWay(DataSet dataSet, Way targetWay, SplitGeometry geometry, double splitPosition) {
         List<IntersectionPoint> intersections = computeDirectInterpolatedIntersections(targetWay, geometry.mainAxis(), splitPosition);
         if (intersections == null) {
+            Logging.info("AutoSplit: falling back to synthetic split line intersections (wayId={0}, splitPosition={1})",
+                targetWay.getUniqueId(), splitPosition);
             Line splitLine = createAutoSplitLine(geometry, splitPosition);
             IntersectionResult intersectionResult =
                 intersectionService.findSplitIntersections(targetWay, splitLine.start(), splitLine.end());
@@ -135,6 +138,9 @@ public class AutoSplitBuildingService {
                 return SplitResult.failure(tr("Unable to compute split intersections: {0}", intersectionResult.getMessage()));
             }
             intersections = intersectionResult.getIntersections();
+        } else {
+            Logging.info("AutoSplit: using direct interpolated intersections (wayId={0}, splitPosition={1})",
+                targetWay.getUniqueId(), splitPosition);
         }
 
         if (intersections.size() != 2) {
