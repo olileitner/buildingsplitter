@@ -6,7 +6,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
-import org.openstreetmap.josm.actions.OrthogonalizeAction;
 import org.openstreetmap.josm.command.SequenceCommand;
 import org.openstreetmap.josm.data.UndoRedoHandler;
 import org.openstreetmap.josm.data.coor.EastNorth;
@@ -16,7 +15,6 @@ import org.openstreetmap.josm.data.osm.Node;
 import org.openstreetmap.josm.data.osm.OsmPrimitive;
 import org.openstreetmap.josm.data.osm.Way;
 import org.openstreetmap.josm.data.projection.ProjectionRegistry;
-import org.openstreetmap.josm.tools.Logging;
 
 public class AutoSplitBuildingService {
 
@@ -131,8 +129,6 @@ public class AutoSplitBuildingService {
     private SplitResult splitSingleWay(DataSet dataSet, Way targetWay, SplitGeometry geometry, double splitPosition) {
         List<IntersectionPoint> intersections = computeDirectInterpolatedIntersections(targetWay, geometry.mainAxis(), splitPosition);
         if (intersections == null) {
-            Logging.info("AutoSplit: falling back to synthetic split line intersections (wayId={0}, splitPosition={1})",
-                targetWay.getUniqueId(), splitPosition);
             Line splitLine = createAutoSplitLine(geometry, splitPosition);
             IntersectionResult intersectionResult =
                 intersectionService.findSplitIntersections(targetWay, splitLine.start(), splitLine.end());
@@ -140,9 +136,6 @@ public class AutoSplitBuildingService {
                 return SplitResult.failure(tr("Unable to compute split intersections: {0}", intersectionResult.getMessage()));
             }
             intersections = intersectionResult.getIntersections();
-        } else {
-            Logging.info("AutoSplit: using direct interpolated intersections (wayId={0}, splitPosition={1})",
-                targetWay.getUniqueId(), splitPosition);
         }
 
         if (intersections.size() != 2) {
@@ -284,28 +277,6 @@ public class AutoSplitBuildingService {
     private boolean isSamePoint(LatLon first, LatLon second) {
         return Math.abs(first.lat() - second.lat()) <= EPSILON
             && Math.abs(first.lon() - second.lon()) <= EPSILON;
-    }
-
-    private SplitResult orthogonalizeCreatedWays(DataSet dataSet, SplitResult splitResult) {
-        List<Way> createdWays = splitResult.getCreatedWays();
-        if (createdWays.isEmpty()) {
-            return splitResult;
-        }
-
-        try {
-            List<OsmPrimitive> primitivesToOrthogonalize = new ArrayList<>(createdWays);
-            SequenceCommand orthogonalizeCommand = OrthogonalizeAction.orthogonalize(primitivesToOrthogonalize);
-            if (orthogonalizeCommand != null) {
-                UndoRedoHandler.getInstance().add(orthogonalizeCommand);
-            }
-        } catch (OrthogonalizeAction.InvalidUserInputException ex) {
-            // Keep split success even when orthogonalization input is rejected.
-        } catch (RuntimeException ex) {
-            // Keep split success even when orthogonalization fails unexpectedly.
-        }
-
-        dataSet.setSelected(createdWays);
-        return splitResult;
     }
 
     private List<Double> buildSplitPositions(List<Node> corners, Vector2D axis, int parts) {
@@ -628,7 +599,21 @@ public class AutoSplitBuildingService {
         }
 
         private double length() {
-            return Math.hypot(end.lon() - start.lon(), end.lat() - start.lat());
+            if (start == null || end == null || start.getCoor() == null || end.getCoor() == null) {
+                return 0.0;
+            }
+
+            EastNorth startEn;
+            EastNorth endEn;
+            if (ProjectionRegistry.getProjection() != null) {
+                startEn = ProjectionRegistry.getProjection().latlon2eastNorth(start.getCoor());
+                endEn = ProjectionRegistry.getProjection().latlon2eastNorth(end.getCoor());
+            } else {
+                startEn = new EastNorth(start.lon(), start.lat());
+                endEn = new EastNorth(end.lon(), end.lat());
+            }
+
+            return Math.hypot(endEn.east() - startEn.east(), endEn.north() - startEn.north());
         }
     }
 
