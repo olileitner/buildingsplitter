@@ -46,10 +46,10 @@ public class SplitBuildingMapMode extends MapMode {
     private static final double SNAP_FEEDBACK_CORNER_DISTANCE_METERS = 1.0;
     private static final double CLICK_NODE_TOLERANCE_METERS = 1.5;
     private static final double CLICK_EDGE_TOLERANCE_METERS = 1.5;
+    private static final double AUTOSPLIT_INTERIOR_MARGIN_METERS = 3.0;
     private static final double CLICK_AMBIGUITY_DELTA_METERS = 0.25;
     private static final double EARTH_RADIUS_METERS = 6_371_000.0;
-    private static final String MANUAL_MODE_TOOLTIP = tr("Manual split mode: drag a line across one building");
-    private static final String AUTOSPLIT_MODE_TOOLTIP = tr("AutoSplit mode (Ctrl): click inside a building");
+    private static final String MODE_TOOLTIP = tr("Split mode: drag for line split, click near corner/edge for manual split, click well inside a building for AutoSplit");
     // TEMP DEBUG: traces external context consume/default resolution in Ctrl AutoSplit flow.
     private static final boolean DEBUG_CONTEXT_TRANSFER = false;
     private static final Shortcut SPLIT_BUILDING_SHORTCUT = Shortcut.registerShortcut(
@@ -76,7 +76,6 @@ public class SplitBuildingMapMode extends MapMode {
     private Node clickSecondPreviewNode;
     private LatLon clickSecondPreviewPoint;
     private boolean snappingEnabled;
-    private boolean ctrlAutoSplitMode;
 
     private int lastAutoSplitParts = 2;
     private int lastAutoSplitIncrement = 1;
@@ -117,7 +116,7 @@ public class SplitBuildingMapMode extends MapMode {
             MainApplication.getMap().mapView.addMouseListener(this);
             MainApplication.getMap().mapView.addMouseMotionListener(this);
             MainApplication.getMap().mapView.addTemporaryLayer(previewLinePaintable);
-            updateTemporaryMode(false);
+            updateMapCursor();
             updateMapModeTooltip();
         }
     }
@@ -138,13 +137,6 @@ public class SplitBuildingMapMode extends MapMode {
     @Override
     public void mousePressed(MouseEvent e) {
         if (e.getButton() != MouseEvent.BUTTON1) {
-            return;
-        }
-
-        updateTemporaryMode(e.isControlDown());
-        if (ctrlAutoSplitMode) {
-            resetState();
-            repaintMapView();
             return;
         }
 
@@ -171,13 +163,6 @@ public class SplitBuildingMapMode extends MapMode {
 
     @Override
     public void mouseDragged(MouseEvent e) {
-        updateTemporaryMode(e.isControlDown());
-        if (ctrlAutoSplitMode) {
-            resetState();
-            repaintMapView();
-            return;
-        }
-
         if (dragStart == null) {
             return;
         }
@@ -194,15 +179,7 @@ public class SplitBuildingMapMode extends MapMode {
 
     @Override
     public void mouseReleased(MouseEvent e) {
-        updateTemporaryMode(e.isControlDown());
         if (e.getButton() != MouseEvent.BUTTON1) {
-            resetState();
-            repaintMapView();
-            return;
-        }
-
-        if (ctrlAutoSplitMode) {
-            handleAutoSplitClick(e);
             resetState();
             repaintMapView();
             return;
@@ -231,8 +208,8 @@ public class SplitBuildingMapMode extends MapMode {
         }
 
         dragCurrent = releasePoint;
-        if (isSamePoint(dragStart, dragCurrent)) {
-            handleManualClickSelection(dataSet, releasePoint);
+        if (!isDragSplitGesture(dragStart, dragCurrent)) {
+            handleClickWithoutDrag(dataSet, releasePoint);
             resetDragState();
             repaintMapView();
             return;
@@ -245,8 +222,7 @@ public class SplitBuildingMapMode extends MapMode {
 
     @Override
     public void mouseMoved(MouseEvent e) {
-        updateTemporaryMode(e.isControlDown());
-        if (ctrlAutoSplitMode || clickFirstWay == null || dragStart != null) {
+        if (clickFirstWay == null || dragStart != null) {
             if (clickSecondPreviewNode != null || clickSecondPreviewPoint != null) {
                 clickSecondPreviewNode = null;
                 clickSecondPreviewPoint = null;
@@ -264,6 +240,31 @@ public class SplitBuildingMapMode extends MapMode {
         clickSecondPreviewNode = previewResolution == null ? null : previewResolution.existingNode();
         clickSecondPreviewPoint = previewResolution == null ? null : previewResolution.coordinate();
         repaintMapView();
+    }
+
+    private void handleClickWithoutDrag(DataSet dataSet, LatLon clickPoint) {
+        if (clickFirstWay != null || clickFirstNode != null) {
+            handleManualClickSelection(dataSet, clickPoint);
+            return;
+        }
+
+        ClickIntentResolution intent = resolveClickIntent(dataSet, clickPoint);
+        if (intent.kind() == ClickIntentKind.MANUAL) {
+            handleManualClickSelection(dataSet, clickPoint);
+            return;
+        }
+
+        if (intent.kind() == ClickIntentKind.AUTOSPLIT_INTERIOR && intent.autoSplitWay() != null) {
+            openAutoSplitDialogForBuilding(dataSet, intent.autoSplitWay());
+            return;
+        }
+
+        if (intent.message() != null && !intent.message().isEmpty()) {
+            showError(intent.message());
+            return;
+        }
+
+        showError(tr("Click near a building corner/edge for manual split, or clearly inside one building for AutoSplit."));
     }
 
     private void handleManualClickSelection(DataSet dataSet, LatLon clickPoint) {
@@ -293,6 +294,31 @@ public class SplitBuildingMapMode extends MapMode {
     }
 
     private FirstClickSelection resolveFirstClick(DataSet dataSet, LatLon clickPoint, boolean showErrors) {
+        List<FirstClickSelection> candidates = findFirstClickCandidates(dataSet, clickPoint);
+
+        if (candidates.isEmpty()) {
+            if (showErrors) {
+                showError(tr("First click must be near an existing building corner node."));
+            }
+            return null;
+        }
+
+        candidates.sort(Comparator
+            .comparingDouble(FirstClickSelection::distance)
+            .thenComparingLong(selection -> selection.way().getUniqueId())
+            .thenComparingLong(selection -> selection.node().getUniqueId()));
+
+        if (isAmbiguousByDistance(candidates.get(0).distance(), candidates, FirstClickSelection::distance)) {
+            if (showErrors) {
+                showError(tr("First click is ambiguous. Please click closer to one building corner."));
+            }
+            return null;
+        }
+
+        return candidates.get(0);
+    }
+
+    private List<FirstClickSelection> findFirstClickCandidates(DataSet dataSet, LatLon clickPoint) {
         List<FirstClickSelection> candidates = new ArrayList<>();
 
         for (Way way : dataSet.getWays()) {
@@ -316,26 +342,11 @@ public class SplitBuildingMapMode extends MapMode {
             }
         }
 
-        if (candidates.isEmpty()) {
-            if (showErrors) {
-                showError(tr("First click must be near an existing building corner node."));
-            }
-            return null;
-        }
-
         candidates.sort(Comparator
             .comparingDouble(FirstClickSelection::distance)
             .thenComparingLong(selection -> selection.way().getUniqueId())
             .thenComparingLong(selection -> selection.node().getUniqueId()));
-
-        if (isAmbiguousByDistance(candidates.get(0).distance(), candidates, FirstClickSelection::distance)) {
-            if (showErrors) {
-                showError(tr("First click is ambiguous. Please click closer to one building corner."));
-            }
-            return null;
-        }
-
-        return candidates.get(0);
+        return candidates;
     }
 
     private SecondClickResolution resolveSecondClick(Way way, LatLon clickPoint, boolean showErrors) {
@@ -574,28 +585,7 @@ public class SplitBuildingMapMode extends MapMode {
         return Math.abs(secondDistance - bestDistance) <= CLICK_AMBIGUITY_DELTA_METERS;
     }
 
-    private void handleAutoSplitClick(MouseEvent e) {
-        DataSet dataSet = MainApplication.getLayerManager().getEditDataSet();
-        if (dataSet == null) {
-            showError(tr("No editable dataset is available."));
-            return;
-        }
-
-        LatLon clickPoint = toLatLon(e);
-        if (!isValidClickedPoint(clickPoint)) {
-            showError(tr("Unable to read clicked map location. Please click inside the map view."));
-            return;
-        }
-
-        Way clickedBuilding = findSingleClickedBuilding(dataSet, clickPoint);
-        if (clickedBuilding == null) {
-            return;
-        }
-
-        openAutoSplitDialogForBuilding(dataSet, clickedBuilding);
-    }
-
-    private Way findSingleClickedBuilding(DataSet dataSet, LatLon clickPoint) {
+    private Way findSingleClickedBuilding(DataSet dataSet, LatLon clickPoint, boolean showErrors) {
         List<Way> containingBuildings = new ArrayList<>();
 
         for (Way way : dataSet.getWays()) {
@@ -608,13 +598,17 @@ public class SplitBuildingMapMode extends MapMode {
         }
 
         if (containingBuildings.isEmpty()) {
-            showError(tr("No building found at the clicked location."));
+            if (showErrors) {
+                showError(tr("No building found at the clicked location."));
+            }
             return null;
         }
 
         if (containingBuildings.size() > 1) {
             containingBuildings.sort(Comparator.comparingLong(Way::getUniqueId));
-            showError(tr("Multiple buildings match this click. Please click a less ambiguous location."));
+            if (showErrors) {
+                showError(tr("Multiple buildings match this click. Please click a less ambiguous location."));
+            }
             return null;
         }
 
@@ -661,6 +655,116 @@ public class SplitBuildingMapMode extends MapMode {
         }
 
         return inside;
+    }
+
+    private ClickIntentResolution resolveClickIntent(DataSet dataSet, LatLon clickPoint) {
+        List<FirstClickSelection> firstClickCandidates = findFirstClickCandidates(dataSet, clickPoint);
+        if (!firstClickCandidates.isEmpty()) {
+            if (isAmbiguousByDistance(firstClickCandidates.get(0).distance(), firstClickCandidates, FirstClickSelection::distance)) {
+                return ClickIntentResolution.ambiguous(
+                    tr("Click is ambiguous near multiple corner nodes. Please click closer to one corner.")
+                );
+            }
+            return ClickIntentResolution.manual();
+        }
+
+        List<EdgeManualCandidate> edgeCandidates = findManualEdgeCandidates(dataSet, clickPoint);
+        if (!edgeCandidates.isEmpty()) {
+            if (isAmbiguousByDistance(edgeCandidates.get(0).distance(), edgeCandidates, EdgeManualCandidate::distance)) {
+                return ClickIntentResolution.ambiguous(
+                    tr("Click is ambiguous near multiple building edges. Please click closer to one edge.")
+                );
+            }
+            return ClickIntentResolution.manual();
+        }
+
+        Way clickedBuilding = findSingleClickedBuilding(dataSet, clickPoint, false);
+        if (clickedBuilding == null) {
+            List<Way> containingBuildings = findContainingBuildings(dataSet, clickPoint);
+            if (containingBuildings.size() > 1) {
+                return ClickIntentResolution.ambiguous(
+                    tr("Multiple buildings match this click. Please click a less ambiguous location.")
+                );
+            }
+            return ClickIntentResolution.none();
+        }
+
+        double minEdgeDistance = minDistanceToWayEdgesMeters(clickedBuilding, clickPoint);
+        double minCornerDistance = minDistanceToWayCornersMeters(clickedBuilding, clickPoint);
+        if (minEdgeDistance <= AUTOSPLIT_INTERIOR_MARGIN_METERS || minCornerDistance <= AUTOSPLIT_INTERIOR_MARGIN_METERS) {
+            return ClickIntentResolution.ambiguous(
+                tr("Click is too close to the building boundary. Use manual split near edges/corners or click deeper inside for AutoSplit.")
+            );
+        }
+
+        return ClickIntentResolution.autoSplit(clickedBuilding);
+    }
+
+    private List<Way> findContainingBuildings(DataSet dataSet, LatLon clickPoint) {
+        List<Way> containingBuildings = new ArrayList<>();
+        for (Way way : dataSet.getWays()) {
+            if (way == null || way.isDeleted() || !way.isClosed() || !way.hasKey("building")) {
+                continue;
+            }
+            if (containsPoint(way, clickPoint)) {
+                containingBuildings.add(way);
+            }
+        }
+        containingBuildings.sort(Comparator.comparingLong(Way::getUniqueId));
+        return containingBuildings;
+    }
+
+    private List<EdgeManualCandidate> findManualEdgeCandidates(DataSet dataSet, LatLon clickPoint) {
+        List<EdgeManualCandidate> candidates = new ArrayList<>();
+        for (Way way : dataSet.getWays()) {
+            if (way == null || way.isDeleted() || !way.isClosed() || !way.hasKey("building")) {
+                continue;
+            }
+
+            for (SegmentCandidate segmentCandidate : findSegmentCandidates(way, clickPoint)) {
+                candidates.add(new EdgeManualCandidate(way, segmentCandidate.segmentIndex(), segmentCandidate.distance()));
+            }
+        }
+
+        candidates.sort(Comparator
+            .comparingDouble(EdgeManualCandidate::distance)
+            .thenComparingLong(candidate -> candidate.way().getUniqueId())
+            .thenComparingInt(EdgeManualCandidate::segmentIndex));
+        return candidates;
+    }
+
+    private double minDistanceToWayEdgesMeters(Way way, LatLon clickPoint) {
+        List<Node> ringNodes = new ArrayList<>(way.getNodes());
+        if (ringNodes.size() > 1 && ringNodes.get(0).equals(ringNodes.get(ringNodes.size() - 1))) {
+            ringNodes.remove(ringNodes.size() - 1);
+        }
+
+        double minDistance = Double.POSITIVE_INFINITY;
+        for (int i = 0; i < ringNodes.size(); i++) {
+            Node start = ringNodes.get(i);
+            Node end = ringNodes.get((i + 1) % ringNodes.size());
+            if (start.getCoor() == null || end.getCoor() == null) {
+                continue;
+            }
+            minDistance = Math.min(minDistance, pointToSegmentDistanceMeters(clickPoint, start.getCoor(), end.getCoor()));
+        }
+        return minDistance;
+    }
+
+    private double minDistanceToWayCornersMeters(Way way, LatLon clickPoint) {
+        List<Node> ringNodes = new ArrayList<>(way.getNodes());
+        if (ringNodes.size() > 1 && ringNodes.get(0).equals(ringNodes.get(ringNodes.size() - 1))) {
+            ringNodes.remove(ringNodes.size() - 1);
+        }
+
+        double minDistance = Double.POSITIVE_INFINITY;
+        for (Node node : ringNodes) {
+            if (node.getCoor() == null) {
+                continue;
+            }
+            minDistance = Math.min(minDistance, distanceMeters(node.getCoor(), clickPoint));
+        }
+        return minDistance;
     }
 
     private void openAutoSplitDialogForBuilding(DataSet dataSet, Way buildingWay) {
@@ -857,6 +961,22 @@ public class SplitBuildingMapMode extends MapMode {
     private boolean isSamePoint(LatLon first, LatLon second) {
         return Math.abs(first.lat() - second.lat()) <= CLICK_EPSILON
             && Math.abs(first.lon() - second.lon()) <= CLICK_EPSILON;
+    }
+
+    boolean isDragSplitGesture(LatLon pressPoint, LatLon releasePoint) {
+        return pressPoint != null && releasePoint != null && !isSamePoint(pressPoint, releasePoint);
+    }
+
+    ClickIntentResolution resolveClickIntentForTesting(DataSet dataSet, LatLon clickPoint) {
+        return resolveClickIntent(dataSet, clickPoint);
+    }
+
+    boolean canResolveManualFirstClickForTesting(DataSet dataSet, LatLon clickPoint) {
+        return resolveFirstClick(dataSet, clickPoint, false) != null;
+    }
+
+    boolean canResolveManualSecondClickForTesting(Way way, LatLon clickPoint) {
+        return resolveSecondClick(way, clickPoint, false) != null;
     }
 
     private void updateSnapFeedback() {
@@ -1061,15 +1181,6 @@ public class SplitBuildingMapMode extends MapMode {
                 return false;
             }
 
-            if (event.getKeyCode() == KeyEvent.VK_CONTROL) {
-                if (event.getID() == KeyEvent.KEY_PRESSED) {
-                    updateTemporaryMode(true);
-                } else if (event.getID() == KeyEvent.KEY_RELEASED) {
-                    updateTemporaryMode(false);
-                }
-                return false;
-            }
-
             if (event.getID() != KeyEvent.KEY_PRESSED || event.getKeyCode() != KeyEvent.VK_ESCAPE) {
                 return false;
             }
@@ -1096,37 +1207,24 @@ public class SplitBuildingMapMode extends MapMode {
 
     private void handleEscapePressed() {
         resetState();
-        updateTemporaryMode(false);
         repaintMapView();
         if (MainApplication.getMap() != null) {
             MainApplication.getMap().selectSelectTool(false);
         }
     }
 
-    private void updateTemporaryMode(boolean ctrlPressed) {
-        if (ctrlAutoSplitMode == ctrlPressed) {
-            return;
-        }
-        ctrlAutoSplitMode = ctrlPressed;
-        if (ctrlAutoSplitMode) {
-            resetState();
-        }
-        updateMapCursor();
-        updateMapModeTooltip();
-    }
-
     private void updateMapCursor() {
         if (MainApplication.getMap() == null || MainApplication.getMap().mapView == null) {
             return;
         }
-        MainApplication.getMap().mapView.setCursor(ctrlAutoSplitMode ? AUTOSPLIT_CURSOR : MANUAL_CURSOR);
+        MainApplication.getMap().mapView.setCursor(MANUAL_CURSOR);
     }
 
     private void updateMapModeTooltip() {
         if (MainApplication.getMap() == null || MainApplication.getMap().mapView == null) {
             return;
         }
-        MainApplication.getMap().mapView.setToolTipText(ctrlAutoSplitMode ? AUTOSPLIT_MODE_TOOLTIP : MANUAL_MODE_TOOLTIP);
+        MainApplication.getMap().mapView.setToolTipText(MODE_TOOLTIP);
     }
 
     private void showError(String message) {
@@ -1225,6 +1323,77 @@ public class SplitBuildingMapMode extends MapMode {
 
         private Node existingEndpoint() {
             return existingEndpoint;
+        }
+    }
+
+    private static final class EdgeManualCandidate {
+        private final Way way;
+        private final int segmentIndex;
+        private final double distance;
+
+        private EdgeManualCandidate(Way way, int segmentIndex, double distance) {
+            this.way = way;
+            this.segmentIndex = segmentIndex;
+            this.distance = distance;
+        }
+
+        private Way way() {
+            return way;
+        }
+
+        private int segmentIndex() {
+            return segmentIndex;
+        }
+
+        private double distance() {
+            return distance;
+        }
+    }
+
+    enum ClickIntentKind {
+        MANUAL,
+        AUTOSPLIT_INTERIOR,
+        AMBIGUOUS,
+        NONE
+    }
+
+    static final class ClickIntentResolution {
+        private final ClickIntentKind kind;
+        private final Way autoSplitWay;
+        private final String message;
+
+        private ClickIntentResolution(ClickIntentKind kind, Way autoSplitWay, String message) {
+            this.kind = kind;
+            this.autoSplitWay = autoSplitWay;
+            this.message = message;
+        }
+
+        private static ClickIntentResolution manual() {
+            return new ClickIntentResolution(ClickIntentKind.MANUAL, null, null);
+        }
+
+        private static ClickIntentResolution autoSplit(Way way) {
+            return new ClickIntentResolution(ClickIntentKind.AUTOSPLIT_INTERIOR, way, null);
+        }
+
+        private static ClickIntentResolution ambiguous(String message) {
+            return new ClickIntentResolution(ClickIntentKind.AMBIGUOUS, null, message);
+        }
+
+        private static ClickIntentResolution none() {
+            return new ClickIntentResolution(ClickIntentKind.NONE, null, null);
+        }
+
+        ClickIntentKind kind() {
+            return kind;
+        }
+
+        Way autoSplitWay() {
+            return autoSplitWay;
+        }
+
+        String message() {
+            return message;
         }
     }
 
