@@ -49,8 +49,8 @@ class BuildingIntersectionServiceTest {
 
         IntersectionResult result = service.findSplitIntersections(
             rectangle,
-            new LatLon(2.0, -1.0),
-            new LatLon(2.0, 2.0)
+            new LatLon(3.0, -1.0),
+            new LatLon(3.0, 3.0)
         );
 
         assertFalse(result.isSuccess());
@@ -107,11 +107,60 @@ class BuildingIntersectionServiceTest {
         assertTrue(result.getIntersections().isEmpty());
     }
 
+    @Test
+    void cornerToNonAdjacentEdgeIsAllowed() {
+        DataSet dataSet = new DataSet();
+        Way rectangle = createClosedRectangle(dataSet);
+
+        IntersectionResult result = service.findSplitIntersections(
+            rectangle,
+            new LatLon(0.0, 0.0),
+            new LatLon(2.0, 1.0)
+        );
+
+        assertTrue(result.isSuccess());
+        assertEquals(2, result.getIntersections().size());
+        assertTrue(result.getIntersections().stream().anyMatch(IntersectionPoint::isExistingNode));
+        assertTrue(result.getIntersections().stream().anyMatch(point -> !point.isExistingNode()));
+    }
+
+    @Test
+    void nonAdjacentEdgeToCornerIsAllowed() {
+        DataSet dataSet = new DataSet();
+        Way rectangle = createClosedRectangle(dataSet);
+
+        IntersectionResult result = service.findSplitIntersections(
+            rectangle,
+            new LatLon(2.0, 1.0),
+            new LatLon(0.0, 0.0)
+        );
+
+        assertTrue(result.isSuccess());
+        assertEquals(2, result.getIntersections().size());
+        assertTrue(result.getIntersections().stream().anyMatch(IntersectionPoint::isExistingNode));
+        assertTrue(result.getIntersections().stream().anyMatch(point -> !point.isExistingNode()));
+    }
+
+    @Test
+    void lineOverlappingBuildingEdgeSegmentRemainsRejected() {
+        DataSet dataSet = new DataSet();
+        Way rectangle = createClosedRectangle(dataSet);
+
+        IntersectionResult result = service.findSplitIntersections(
+            rectangle,
+            new LatLon(0.0, 0.5),
+            new LatLon(0.0, 1.5)
+        );
+
+        assertFalse(result.isSuccess());
+        assertEquals("Line overlaps building edge; not supported", result.getMessage());
+    }
+
     private Way createClosedRectangle(DataSet dataSet) {
         Node n1 = createNode(dataSet, 0.0, 0.0);
-        Node n2 = createNode(dataSet, 0.0, 1.0);
-        Node n3 = createNode(dataSet, 1.0, 1.0);
-        Node n4 = createNode(dataSet, 1.0, 0.0);
+        Node n2 = createNode(dataSet, 0.0, 2.0);
+        Node n3 = createNode(dataSet, 2.0, 2.0);
+        Node n4 = createNode(dataSet, 2.0, 0.0);
 
         Way way = new Way();
         way.setNodes(Arrays.asList(n1, n2, n3, n4, n1));

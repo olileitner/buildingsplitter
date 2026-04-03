@@ -132,8 +132,14 @@ public class BuildingIntersectionService {
                 return SegmentIntersection.none();
             }
 
-            if (isPointOnSegment(p1, q1, q2) || isPointOnSegment(p2, q1, q2)
-                || isPointOnSegment(q1, p1, p2) || isPointOnSegment(q2, p1, p2)) {
+            // Collinear case: a single shared endpoint is a valid vertex touch,
+            // but a shared segment length remains an unsupported edge overlap.
+            LatLon collinearTouchPoint = findSingleCollinearTouchPoint(p1, p2, q1, q2);
+            if (collinearTouchPoint != null) {
+                return SegmentIntersection.point(collinearTouchPoint);
+            }
+
+            if (hasCollinearSegmentOverlap(p1, p2, q1, q2)) {
                 return SegmentIntersection.collinearOverlap();
             }
 
@@ -156,6 +162,66 @@ public class BuildingIntersectionService {
         }
 
         return SegmentIntersection.point(intersectionPoint);
+    }
+
+    private LatLon findSingleCollinearTouchPoint(LatLon p1, LatLon p2, LatLon q1, LatLon q2) {
+        List<LatLon> sharedPoints = new ArrayList<>();
+        addIfPointOnBothSegments(sharedPoints, p1, p1, p2, q1, q2);
+        addIfPointOnBothSegments(sharedPoints, p2, p1, p2, q1, q2);
+        addIfPointOnBothSegments(sharedPoints, q1, p1, p2, q1, q2);
+        addIfPointOnBothSegments(sharedPoints, q2, p1, p2, q1, q2);
+
+        if (sharedPoints.size() == 1) {
+            return sharedPoints.get(0);
+        }
+        return null;
+    }
+
+    private void addIfPointOnBothSegments(
+        List<LatLon> sharedPoints,
+        LatLon point,
+        LatLon p1,
+        LatLon p2,
+        LatLon q1,
+        LatLon q2
+    ) {
+        if (!isPointOnSegment(point, p1, p2) || !isPointOnSegment(point, q1, q2)) {
+            return;
+        }
+
+        for (LatLon existing : sharedPoints) {
+            if (isSamePoint(existing, point)) {
+                return;
+            }
+        }
+        sharedPoints.add(point);
+    }
+
+    private boolean hasCollinearSegmentOverlap(LatLon p1, LatLon p2, LatLon q1, LatLon q2) {
+        if (!isPointOnSegment(p1, q1, q2)
+            && !isPointOnSegment(p2, q1, q2)
+            && !isPointOnSegment(q1, p1, p2)
+            && !isPointOnSegment(q2, p1, p2)) {
+            return false;
+        }
+
+        double pDx = Math.abs(p2.lon() - p1.lon());
+        double pDy = Math.abs(p2.lat() - p1.lat());
+        if (pDx >= pDy) {
+            return overlapLength(p1.lon(), p2.lon(), q1.lon(), q2.lon()) > EPSILON;
+        }
+        return overlapLength(p1.lat(), p2.lat(), q1.lat(), q2.lat()) > EPSILON;
+    }
+
+    private double overlapLength(double a1, double a2, double b1, double b2) {
+        double minA = Math.min(a1, a2);
+        double maxA = Math.max(a1, a2);
+        double minB = Math.min(b1, b2);
+        double maxB = Math.max(b1, b2);
+
+        double overlapMin = Math.max(minA, minB);
+        double overlapMax = Math.min(maxA, maxB);
+        return overlapMax - overlapMin;
     }
 
     private boolean isPointOnSegment(LatLon point, LatLon segmentStart, LatLon segmentEnd) {
