@@ -12,6 +12,7 @@ import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeAll;
+import org.openstreetmap.josm.data.UndoRedoHandler;
 import org.openstreetmap.josm.data.coor.LatLon;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Node;
@@ -33,6 +34,7 @@ class BuildingSplitServiceTest {
 
     @Test
     void validRectangularBuildingSplit() {
+        UndoRedoHandler.getInstance().clean();
         DataSet dataSet = new DataSet();
         RectFixture rect = createClosedRectBuilding(dataSet, true);
 
@@ -41,9 +43,9 @@ class BuildingSplitServiceTest {
         SplitResult result = service.splitSelectedBuilding(dataSet);
 
         assertTrue(result.isSuccess());
-        assertTrue(rect.way.isDeleted());
+        assertFalse(rect.way.isDeleted());
 
-        List<Way> resultingWays = findActiveWaysExcluding(dataSet, rect.way);
+        List<Way> resultingWays = findActiveWays(dataSet);
         assertEquals(2, resultingWays.size());
 
         for (Way way : resultingWays) {
@@ -56,6 +58,7 @@ class BuildingSplitServiceTest {
 
     @Test
     void selectedNodesNotOnBuildingFails() {
+        UndoRedoHandler.getInstance().clean();
         DataSet dataSet = new DataSet();
         RectFixture rect = createClosedRectBuilding(dataSet, true);
         Node externalNode = createNode(dataSet, 2.0, 2.0);
@@ -70,6 +73,7 @@ class BuildingSplitServiceTest {
 
     @Test
     void sameNodeSelectedTwiceFails() {
+        UndoRedoHandler.getInstance().clean();
         DataSet dataSet = new DataSet();
         RectFixture rect = createClosedRectBuilding(dataSet, true);
 
@@ -83,6 +87,7 @@ class BuildingSplitServiceTest {
 
     @Test
     void noBuildingTagFails() {
+        UndoRedoHandler.getInstance().clean();
         DataSet dataSet = new DataSet();
         RectFixture rect = createClosedRectBuilding(dataSet, false);
 
@@ -96,6 +101,7 @@ class BuildingSplitServiceTest {
 
     @Test
     void openWayFails() {
+        UndoRedoHandler.getInstance().clean();
         DataSet dataSet = new DataSet();
         OpenRectFixture openRect = createOpenRectBuilding(dataSet, true);
 
@@ -109,6 +115,7 @@ class BuildingSplitServiceTest {
 
     @Test
     void wrongNumberOfSelectedNodesOneFails() {
+        UndoRedoHandler.getInstance().clean();
         DataSet dataSet = new DataSet();
         RectFixture rect = createClosedRectBuilding(dataSet, true);
 
@@ -122,6 +129,7 @@ class BuildingSplitServiceTest {
 
     @Test
     void wrongNumberOfSelectedNodesThreeFails() {
+        UndoRedoHandler.getInstance().clean();
         DataSet dataSet = new DataSet();
         RectFixture rect = createClosedRectBuilding(dataSet, true);
 
@@ -135,6 +143,7 @@ class BuildingSplitServiceTest {
 
     @Test
     void safeTagsAreCopiedAndRiskyTagsAreNot() {
+        UndoRedoHandler.getInstance().clean();
         DataSet dataSet = new DataSet();
         RectFixture rect = createClosedRectBuilding(dataSet, true);
 
@@ -151,7 +160,7 @@ class BuildingSplitServiceTest {
         assertTrue(result.isSuccess());
         assertNotNull(result.getMessage());
 
-        List<Way> resultingWays = findActiveWaysExcluding(dataSet, rect.way);
+        List<Way> resultingWays = findActiveWays(dataSet);
         assertEquals(2, resultingWays.size());
 
         for (Way way : resultingWays) {
@@ -165,6 +174,7 @@ class BuildingSplitServiceTest {
 
     @Test
     void detailedResultExposesOriginalAndOrderedWays() {
+        UndoRedoHandler.getInstance().clean();
         DataSet dataSet = new DataSet();
         RectFixture rect = createClosedRectBuilding(dataSet, true);
 
@@ -174,8 +184,10 @@ class BuildingSplitServiceTest {
 
         assertTrue(detailed.isSuccess());
         assertEquals(rect.way, detailed.getOriginalWay());
-        assertEquals(2, detailed.getNewWays().size());
-        assertEquals(detailed.getNewWays(), detailed.getResultWaysOrdered());
+        assertEquals(1, detailed.getNewWays().size());
+        assertEquals(2, detailed.getResultWaysOrdered().size());
+        assertTrue(detailed.getResultWaysOrdered().contains(rect.way));
+        assertTrue(detailed.getResultWaysOrdered().containsAll(detailed.getNewWays()));
         for (Way way : detailed.getResultWaysOrdered()) {
             assertTrue(way.isClosed());
             assertTrue(way.hasKey("building"));
@@ -184,6 +196,7 @@ class BuildingSplitServiceTest {
 
     @Test
     void legacySplitResultRemainsCompatibleWithDetailedResult() {
+        UndoRedoHandler.getInstance().clean();
         DataSet dataSet = new DataSet();
         RectFixture rect = createClosedRectBuilding(dataSet, true);
 
@@ -193,7 +206,8 @@ class BuildingSplitServiceTest {
 
         assertTrue(legacy.isSuccess());
         assertEquals(2, legacy.getCreatedWays().size());
-        assertTrue(rect.way.isDeleted());
+        assertFalse(rect.way.isDeleted());
+        assertTrue(legacy.getCreatedWays().contains(rect.way));
         for (Way way : legacy.getCreatedWays()) {
             assertTrue(way.isClosed());
             assertTrue(way.hasKey("building"));
@@ -201,7 +215,28 @@ class BuildingSplitServiceTest {
     }
 
     @Test
+    void undoAfterSplitRestoresSingleOriginalWay() {
+        UndoRedoHandler.getInstance().clean();
+        DataSet dataSet = new DataSet();
+        RectFixture rect = createClosedRectBuilding(dataSet, true);
+
+        setSelection(dataSet, rect.way, rect.n1, rect.n3);
+
+        SplitExecutionResult detailed = service.splitSelectedBuildingDetailed(dataSet);
+        assertTrue(detailed.isSuccess());
+        assertEquals(2, findActiveWays(dataSet).size());
+
+        UndoRedoHandler.getInstance().undo();
+
+        List<Way> activeWaysAfterUndo = findActiveWays(dataSet);
+        assertEquals(1, activeWaysAfterUndo.size());
+        assertEquals(rect.way, activeWaysAfterUndo.get(0));
+        assertTrue(activeWaysAfterUndo.get(0).isClosed());
+    }
+
+    @Test
     void detailedFailureContainsMessageAndEmptyResultWays() {
+        UndoRedoHandler.getInstance().clean();
         SplitExecutionResult detailed = service.splitSelectedBuildingDetailed(null);
 
         assertFalse(detailed.isSuccess());
@@ -255,9 +290,8 @@ class BuildingSplitServiceTest {
         dataSet.setSelected(selected);
     }
 
-    private List<Way> findActiveWaysExcluding(DataSet dataSet, Way originalWay) {
+    private List<Way> findActiveWays(DataSet dataSet) {
         return dataSet.getWays().stream()
-            .filter(way -> !way.equals(originalWay))
             .filter(way -> !way.isDeleted())
             .collect(Collectors.toList());
     }

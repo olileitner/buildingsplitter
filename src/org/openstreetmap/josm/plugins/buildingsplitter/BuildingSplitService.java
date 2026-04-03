@@ -3,17 +3,16 @@ package org.openstreetmap.josm.plugins.buildingsplitter;
 import static org.openstreetmap.josm.tools.I18n.tr;
 
 import java.util.ArrayList;
-import java.util.Collection;
-import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Arrays;
-import java.util.Map;
-import java.util.Set;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
 
-import org.openstreetmap.josm.command.AddCommand;
+import org.openstreetmap.josm.command.ChangePropertyCommand;
 import org.openstreetmap.josm.command.Command;
-import org.openstreetmap.josm.command.DeleteCommand;
 import org.openstreetmap.josm.command.SequenceCommand;
+import org.openstreetmap.josm.command.SplitWayCommand;
 import org.openstreetmap.josm.data.UndoRedoHandler;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Node;
@@ -21,8 +20,6 @@ import org.openstreetmap.josm.data.osm.OsmPrimitive;
 import org.openstreetmap.josm.data.osm.Way;
 
 public class BuildingSplitService {
-
-    private static final Set<String> EXCLUDED_TAGS = Set.of("addr:housenumber");
 
     public SplitResult splitSelectedBuilding(DataSet dataSet) {
         SplitExecutionResult detailedResult = splitSelectedBuildingDetailed(dataSet);
@@ -60,22 +57,51 @@ public class BuildingSplitService {
             );
         }
 
-        Way splitWayA = new Way();
-        splitWayA.setNodes(polygonANodes);
-        splitWayA.setKeys(copyTagsExceptExcluded(sourceWay));
+        SplitWayCommand splitCommand;
+        try {
+            // Keep existing geometry preparation and delegate relation-aware split command creation to JOSM core.
+            // This uses doSplitWay to keep a closed chunk on the original way object.
+            List<List<Node>> splitChunks = Arrays.asList(polygonANodes, polygonBNodes);
+            List<Way> chunkWays = SplitWayCommand.createNewWaysFromChunks(sourceWay, splitChunks);
+            if (chunkWays.size() != 2) {
+                return SplitExecutionResult.failure(tr("Building split could not be executed."), sourceWay);
+            }
 
-        Way splitWayB = new Way();
-        splitWayB.setNodes(polygonBNodes);
-        splitWayB.setKeys(copyTagsExceptExcluded(sourceWay));
+            Way wayToKeep = chunkWays.get(0);
+            List<Way> otherWays = new ArrayList<>();
+            otherWays.add(chunkWays.get(1));
 
-        SequenceCommand splitCommand = buildSplitCommand(dataSet, sourceWay, splitWayA, splitWayB);
-        UndoRedoHandler.getInstance().add(splitCommand);
-        List<Way> orderedWays = Arrays.asList(splitWayA, splitWayB);
+            Optional<SplitWayCommand> splitCommandOptional = SplitWayCommand.doSplitWay(
+                sourceWay,
+                wayToKeep,
+                otherWays,
+                new ArrayList<>(dataSet.getSelected()),
+                SplitWayCommand.WhenRelationOrderUncertain.SPLIT_ANYWAY
+            );
+            if (splitCommandOptional.isEmpty()) {
+                return SplitExecutionResult.failure(tr("Building split could not be executed."), sourceWay);
+            }
+            splitCommand = splitCommandOptional.get();
+        } catch (RuntimeException ex) {
+            return SplitExecutionResult.failure(tr("Building split could not be executed."), sourceWay);
+        }
+
+        List<Way> newWays = new ArrayList<>(splitCommand.getNewWays());
+        Way originalWay = splitCommand.getOriginalWay();
+        List<Way> resultWaysOrdered = buildResultWaysOrdered(originalWay, newWays);
+
+        List<Command> commands = new ArrayList<>();
+        commands.add(splitCommand);
+        if (!resultWaysOrdered.isEmpty()) {
+            commands.add(new ChangePropertyCommand(resultWaysOrdered, "addr:housenumber", null));
+        }
+
+        UndoRedoHandler.getInstance().add(new SequenceCommand(tr("Split building"), commands));
         return SplitExecutionResult.success(
             tr("Building split completed."),
-            sourceWay,
-            Arrays.asList(splitWayA, splitWayB),
-            orderedWays
+            originalWay,
+            newWays,
+            resultWaysOrdered
         );
     }
 
@@ -236,22 +262,18 @@ public class BuildingSplitService {
         return nodes.subList(0, nodes.size() - 1).stream().distinct().count();
     }
 
-    private Map<String, String> copyTagsExceptExcluded(Way sourceWay) {
-        Map<String, String> copiedTags = new LinkedHashMap<>();
-        for (Map.Entry<String, String> entry : sourceWay.getKeys().entrySet()) {
-            if (!EXCLUDED_TAGS.contains(entry.getKey())) {
-                copiedTags.put(entry.getKey(), entry.getValue());
-            }
+    private List<Way> buildResultWaysOrdered(Way originalWay, List<Way> newWays) {
+        List<Way> ordered = new ArrayList<>();
+        if (originalWay != null) {
+            ordered.add(originalWay);
         }
-        return copiedTags;
-    }
-
-    private SequenceCommand buildSplitCommand(DataSet dataSet, Way sourceWay, Way splitWayA, Way splitWayB) {
-        List<Command> commands = new ArrayList<>();
-        commands.add(new AddCommand(dataSet, splitWayA));
-        commands.add(new AddCommand(dataSet, splitWayB));
-        commands.add(new DeleteCommand(dataSet, sourceWay));
-        return new SequenceCommand(tr("Split building"), commands);
+        if (newWays != null) {
+            ordered.addAll(newWays);
+        }
+        if (ordered.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return ordered;
     }
 
     private static final class RingPaths {

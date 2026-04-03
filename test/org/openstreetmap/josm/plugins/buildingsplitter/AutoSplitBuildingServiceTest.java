@@ -60,7 +60,7 @@ class AutoSplitBuildingServiceTest {
 
         assertTrue(result.isSuccess());
         assertNotNull(result.getMessage());
-        assertTrue(originalBuilding.isDeleted());
+        assertFalse(originalBuilding.isDeleted());
 
         List<Way> createdWays = result.getCreatedWays();
         assertEquals(2, createdWays.size());
@@ -86,7 +86,7 @@ class AutoSplitBuildingServiceTest {
 
         assertTrue(result.isSuccess());
         assertNotNull(result.getMessage());
-        assertTrue(originalBuilding.isDeleted());
+        assertFalse(originalBuilding.isDeleted());
 
         List<Way> createdWays = result.getCreatedWays();
         assertEquals(3, createdWays.size());
