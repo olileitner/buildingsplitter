@@ -26,6 +26,8 @@ public class AutoSplitBuildingAction extends JosmAction {
     private final AutoSplitOptionsDialog optionsDialog;
     private final HouseNumberService houseNumberService;
     private final VisibleAddressContextService visibleAddressContextService;
+    // TEMP DEBUG: traces external context consume/default selection.
+    private static final boolean DEBUG_CONTEXT_TRANSFER = false;
 
     public AutoSplitBuildingAction() {
         super(
@@ -73,6 +75,8 @@ public class AutoSplitBuildingAction extends JosmAction {
         AddressContextBridge.AddressContext externalContext = AddressContextBridge.consumeAddressContext();
         String externalStreet = externalContext == null ? "" : externalContext.getStreet();
         String externalPostcode = externalContext == null ? "" : externalContext.getPostcode();
+        debugContext("consumeAddressContext present=" + (externalContext != null)
+            + " street='" + externalStreet + "' postcode='" + externalPostcode + "'");
 
         List<Way> lastSuccessfulCreatedWays = Collections.emptyList();
 
@@ -91,10 +95,16 @@ public class AutoSplitBuildingAction extends JosmAction {
 
             List<String> visibleStreetNames = visibleAddressContextService.collectVisibleStreetNames(dataSet);
             String suggestedPostcode = visibleAddressContextService.detectUniformVisiblePostcode(dataSet);
+            String streetSource = !externalStreet.isEmpty() ? "external" : "remembered";
+            String postcodeSource = !externalPostcode.isEmpty()
+                ? "external"
+                : (!lastPostcode.isEmpty() ? "remembered" : "visible");
             String defaultStreet = !externalStreet.isEmpty() ? externalStreet : lastStreet;
             String defaultPostcode = !externalPostcode.isEmpty()
                 ? externalPostcode
                 : (!lastPostcode.isEmpty() ? lastPostcode : suggestedPostcode);
+            debugContext("dialog defaults street='" + defaultStreet + "' (" + streetSource + ")"
+                + " postcode='" + defaultPostcode + "' (" + postcodeSource + ")");
 
             AutoSplitDialogResult dialogResult = optionsDialog.showDialog(
                 MainApplication.getMainFrame(),
@@ -217,5 +227,12 @@ public class AutoSplitBuildingAction extends JosmAction {
         );
     }
 
-}
+    private void debugContext(String message) {
+        if (!DEBUG_CONTEXT_TRANSFER) {
+            return;
+        }
+        String fullMessage = "BuildingSplitter DEBUG (AutoSplitAction): " + message;
+        Logging.info(fullMessage);
+    }
 
+}

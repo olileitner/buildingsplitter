@@ -11,9 +11,11 @@ import org.openstreetmap.josm.command.ChangePropertyCommand;
 import org.openstreetmap.josm.command.Command;
 import org.openstreetmap.josm.command.SequenceCommand;
 import org.openstreetmap.josm.data.UndoRedoHandler;
+import org.openstreetmap.josm.data.coor.EastNorth;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Node;
 import org.openstreetmap.josm.data.osm.Way;
+import org.openstreetmap.josm.data.projection.ProjectionRegistry;
 
 public class AutoSplitPreviewSession {
 
@@ -276,15 +278,16 @@ public class AutoSplitPreviewSession {
             nodes.remove(nodes.size() - 1);
         }
 
-        double latSum = 0.0;
-        double lonSum = 0.0;
+        double eastSum = 0.0;
+        double northSum = 0.0;
         int count = 0;
         for (Node node : nodes) {
-            if (node.getCoor() == null) {
+            EastNorth eastNorth = toEastNorth(node);
+            if (eastNorth == null) {
                 continue;
             }
-            latSum += node.lat();
-            lonSum += node.lon();
+            eastSum += eastNorth.east();
+            northSum += eastNorth.north();
             count++;
         }
 
@@ -292,9 +295,19 @@ public class AutoSplitPreviewSession {
             return 0.0;
         }
 
-        double centerLat = latSum / count;
-        double centerLon = lonSum / count;
-        return (centerLon * axis.getX()) + (centerLat * axis.getY());
+        double centerEast = eastSum / count;
+        double centerNorth = northSum / count;
+        return (centerEast * axis.getX()) + (centerNorth * axis.getY());
+    }
+
+    private EastNorth toEastNorth(Node node) {
+        if (node == null || node.getCoor() == null) {
+            return null;
+        }
+        if (ProjectionRegistry.getProjection() != null) {
+            return ProjectionRegistry.getProjection().latlon2eastNorth(node.getCoor());
+        }
+        return new EastNorth(node.lon(), node.lat());
     }
 
     private static final class AppliedOptions {

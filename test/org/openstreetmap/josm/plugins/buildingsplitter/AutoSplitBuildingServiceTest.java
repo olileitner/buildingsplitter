@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.List;
 
@@ -99,6 +100,32 @@ class AutoSplitBuildingServiceTest {
         List<Way> selectedWays = dataSet.getSelectedWays().stream().toList();
         assertEquals(3, selectedWays.size());
         assertTrue(selectedWays.containsAll(createdWays));
+    }
+
+    @Test
+    void runtimeExceptionInSplitPathReturnsRollbackFailure() throws Exception {
+        DataSet dataSet = new DataSet();
+        Way originalBuilding = createClosedRectBuilding(dataSet, true);
+
+        AutoSplitBuildingService crashingService = new AutoSplitBuildingService();
+        injectSplitService(crashingService, new BuildingSplitService() {
+            @Override
+            public SplitResult splitSelectedBuilding(DataSet ignoredDataSet) {
+                throw new RuntimeException("simulated crash");
+            }
+        });
+
+        SplitResult result = crashingService.autoSplitBuilding(dataSet, originalBuilding, 2);
+
+        assertFalse(result.isSuccess());
+        assertEquals("AutoSplit failed unexpectedly. Changes were rolled back.", result.getMessage());
+        assertFalse(originalBuilding.isDeleted());
+    }
+
+    private void injectSplitService(AutoSplitBuildingService target, BuildingSplitService replacement) throws Exception {
+        Field splitServiceField = AutoSplitBuildingService.class.getDeclaredField("splitService");
+        splitServiceField.setAccessible(true);
+        splitServiceField.set(target, replacement);
     }
 
     private Way createClosedRectBuilding(DataSet dataSet, boolean withBuildingTag) {

@@ -15,6 +15,7 @@ import org.openstreetmap.josm.data.osm.Node;
 import org.openstreetmap.josm.data.osm.OsmPrimitive;
 import org.openstreetmap.josm.data.osm.Way;
 import org.openstreetmap.josm.data.projection.ProjectionRegistry;
+import org.openstreetmap.josm.tools.Logging;
 
 public class AutoSplitBuildingService {
 
@@ -109,6 +110,8 @@ public class AutoSplitBuildingService {
             dataSet.setSelected(orderedFinalWays);
             return finalResult;
         } catch (RuntimeException ex) {
+            Logging.error("AutoSplitBuildingService: unexpected runtime exception during auto split.");
+            Logging.error(ex);
             return rollbackAndFailure(undoStartSize, tr("AutoSplit failed unexpectedly. Changes were rolled back."));
         }
     }

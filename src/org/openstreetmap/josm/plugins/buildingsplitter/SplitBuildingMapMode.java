@@ -50,6 +50,8 @@ public class SplitBuildingMapMode extends MapMode {
     private static final double EARTH_RADIUS_METERS = 6_371_000.0;
     private static final String MANUAL_MODE_TOOLTIP = tr("Manual split mode: drag a line across one building");
     private static final String AUTOSPLIT_MODE_TOOLTIP = tr("AutoSplit mode (Ctrl): click inside a building");
+    // TEMP DEBUG: traces external context consume/default resolution in Ctrl AutoSplit flow.
+    private static final boolean DEBUG_CONTEXT_TRANSFER = false;
     private static final Shortcut SPLIT_BUILDING_SHORTCUT = Shortcut.registerShortcut(
         "mapmode:buildingsplitter:splitbuilding",
         tr("Map mode: {0}", tr("Split Building")),
@@ -675,10 +677,18 @@ public class SplitBuildingMapMode extends MapMode {
         AddressContextBridge.AddressContext externalContext = AddressContextBridge.consumeAddressContext();
         String externalStreet = externalContext == null ? "" : externalContext.getStreet();
         String externalPostcode = externalContext == null ? "" : externalContext.getPostcode();
+        debugContext("consumeAddressContext present=" + (externalContext != null)
+            + " street='" + externalStreet + "' postcode='" + externalPostcode + "'");
+        String streetSource = !externalStreet.isEmpty() ? "external" : "remembered";
+        String postcodeSource = !externalPostcode.isEmpty()
+            ? "external"
+            : (!lastAutoSplitPostcode.isEmpty() ? "remembered" : "visible");
         String defaultStreet = !externalStreet.isEmpty() ? externalStreet : lastAutoSplitStreet;
         String defaultPostcode = !externalPostcode.isEmpty()
             ? externalPostcode
             : (!lastAutoSplitPostcode.isEmpty() ? lastAutoSplitPostcode : suggestedPostcode);
+        debugContext("dialog defaults street='" + defaultStreet + "' (" + streetSource + ")"
+            + " postcode='" + defaultPostcode + "' (" + postcodeSource + ")");
 
         AutoSplitDialogResult dialogResult = autoSplitOptionsDialog.showDialog(
             MainApplication.getMainFrame(),
@@ -718,6 +728,14 @@ public class SplitBuildingMapMode extends MapMode {
             dataSet.setSelected(createdWays);
         }
         Logging.info("SplitBuildingMapMode (Ctrl AutoSplit): " + result.getMessage());
+    }
+
+    private void debugContext(String message) {
+        if (!DEBUG_CONTEXT_TRANSFER) {
+            return;
+        }
+        String fullMessage = "BuildingSplitter DEBUG (SplitMapMode): " + message;
+        Logging.info(fullMessage);
     }
 
     private LatLon toLatLon(MouseEvent e) {
