@@ -1,16 +1,23 @@
 package org.openstreetmap.josm.plugins.buildingsplitter;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.openstreetmap.josm.command.ChangePropertyCommand;
+import org.openstreetmap.josm.data.UndoRedoHandler;
 import org.openstreetmap.josm.data.coor.LatLon;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Node;
@@ -23,6 +30,9 @@ import org.openstreetmap.josm.spi.preferences.MemoryPreferences;
 
 class AutoSplitPreviewSessionTest {
 
+    private static final String PREVIEW_RESET_MESSAGE =
+        "AutoSplit preview was reset because other edits were made in the meantime.";
+
     private Projection previousProjection;
 
     @BeforeAll
@@ -34,6 +44,7 @@ class AutoSplitPreviewSessionTest {
 
     @BeforeEach
     void setMercatorProjection() {
+        UndoRedoHandler.getInstance().clean();
         previousProjection = ProjectionRegistry.getProjection();
         Projection mercator = Projections.getProjectionByCode("EPSG:3857");
         assertNotNull(mercator);
@@ -74,6 +85,68 @@ class AutoSplitPreviewSessionTest {
         assertEquals(Arrays.asList(wayB, wayA), reverseOrdered);
     }
 
+    @Test
+    void refreshAndFinalizeReturnStableResultWaysWithSurvivingOriginalWay() {
+        SessionFixture fixture = createSessionFixture();
+
+        String previewError = fixture.session.refreshPreview(2, "", 1, false, false, "", "");
+        assertNull(previewError);
+
+        SplitResult finalized = fixture.session.finalizePreview(AutoSplitDialogResult.apply(2, "", 1, false, false, "", ""));
+        assertTrue(finalized.isSuccess());
+        assertEquals(2, finalized.getCreatedWays().size());
+        assertTrue(finalized.getCreatedWays().contains(fixture.originalBuilding));
+        assertFalse(fixture.originalBuilding.isDeleted());
+
+        Set<Long> uniqueIds = finalized.getCreatedWays().stream().map(Way::getUniqueId).collect(Collectors.toSet());
+        assertEquals(2, uniqueIds.size());
+    }
+
+    @Test
+    void undoPreviewRollsBackOwnedPreviewCommands() {
+        SessionFixture fixture = createSessionFixture();
+
+        String previewError = fixture.session.refreshPreview(2, "", 1, false, false, "", "");
+        assertNull(previewError);
+        assertEquals(2, countActiveWays(fixture.dataSet));
+
+        fixture.session.undoPreview();
+
+        assertEquals(1, countActiveWays(fixture.dataSet));
+        assertFalse(fixture.originalBuilding.isDeleted());
+    }
+
+    @Test
+    void refreshReturnsResetMessageWhenForeignCommandBreaksOwnership() {
+        SessionFixture fixture = createSessionFixture();
+
+        String firstPreviewError = fixture.session.refreshPreview(2, "", 1, false, false, "", "");
+        assertNull(firstPreviewError);
+
+        int beforeForeign = UndoRedoHandler.getInstance().getUndoCommands().size();
+        UndoRedoHandler.getInstance().add(new ChangePropertyCommand(List.of(fixture.originalBuilding), "name", "foreign"));
+        int afterForeign = UndoRedoHandler.getInstance().getUndoCommands().size();
+        assertTrue(afterForeign > beforeForeign);
+
+        String previewError = fixture.session.refreshPreview(2, "", 1, false, false, "", "");
+        assertEquals(PREVIEW_RESET_MESSAGE, previewError);
+        assertEquals(afterForeign, UndoRedoHandler.getInstance().getUndoCommands().size());
+    }
+
+    @Test
+    void finalizeFailsWithResetMessageAfterOwnershipBreak() {
+        SessionFixture fixture = createSessionFixture();
+
+        String firstPreviewError = fixture.session.refreshPreview(2, "", 1, false, false, "", "");
+        assertNull(firstPreviewError);
+
+        UndoRedoHandler.getInstance().add(new ChangePropertyCommand(List.of(fixture.originalBuilding), "name", "foreign"));
+
+        SplitResult finalized = fixture.session.finalizePreview(AutoSplitDialogResult.apply(2, "", 1, false, false, "", ""));
+        assertFalse(finalized.isSuccess());
+        assertEquals(PREVIEW_RESET_MESSAGE, finalized.getMessage());
+    }
+
     @SuppressWarnings("unchecked")
     private List<Way> invokeOrderWaysBySplitAxis(
         AutoSplitPreviewSession session,
@@ -107,6 +180,35 @@ class AutoSplitPreviewSessionTest {
         Node node = new Node(new LatLon(lat, lon));
         dataSet.addPrimitive(node);
         return node;
+    }
+
+    private SessionFixture createSessionFixture() {
+        DataSet dataSet = new DataSet();
+        Way originalBuilding = createSmallClosedWay(dataSet, 0.0, 0.0);
+
+        AutoSplitPreviewSession session = new AutoSplitPreviewSession(
+            dataSet,
+            originalBuilding,
+            new AutoSplitBuildingService(),
+            new HouseNumberService()
+        );
+        return new SessionFixture(dataSet, originalBuilding, session);
+    }
+
+    private int countActiveWays(DataSet dataSet) {
+        return (int) dataSet.getWays().stream().filter(way -> !way.isDeleted()).count();
+    }
+
+    private static final class SessionFixture {
+        private final DataSet dataSet;
+        private final Way originalBuilding;
+        private final AutoSplitPreviewSession session;
+
+        private SessionFixture(DataSet dataSet, Way originalBuilding, AutoSplitPreviewSession session) {
+            this.dataSet = dataSet;
+            this.originalBuilding = originalBuilding;
+            this.session = session;
+        }
     }
 }
 

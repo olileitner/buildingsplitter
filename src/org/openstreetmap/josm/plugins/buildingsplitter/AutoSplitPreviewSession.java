@@ -32,6 +32,7 @@ public class AutoSplitPreviewSession {
 
     private SplitResult currentPreviewResult;
     private AppliedOptions currentAppliedOptions;
+    private boolean previewInvalidated;
 
     public AutoSplitPreviewSession(
         DataSet dataSet,
@@ -56,6 +57,10 @@ public class AutoSplitPreviewSession {
         String street,
         String postcode
     ) {
+        if (previewInvalidated) {
+            return PREVIEW_RESET_MESSAGE;
+        }
+
         if (!undoPreviewOwnedCommands()) {
             return PREVIEW_RESET_MESSAGE;
         }
@@ -134,17 +139,25 @@ public class AutoSplitPreviewSession {
             normalizedStreet,
             normalizedPostcode
         );
+        previewInvalidated = false;
         return null;
     }
 
     public void undoPreview() {
         undoPreviewOwnedCommands();
         clearPreviewState();
+        previewInvalidated = false;
     }
 
     public SplitResult finalizePreview(AutoSplitDialogResult dialogResult) {
         if (dialogResult == null || dialogResult.isCancel() || dialogResult.isSkip()) {
             return SplitResult.failure(tr("AutoSplit preview was not confirmed."));
+        }
+
+        if (previewInvalidated || !isPreviewOwnershipIntact()) {
+            resetPreviewSessionState();
+            previewInvalidated = true;
+            return SplitResult.failure(PREVIEW_RESET_MESSAGE);
         }
 
         if (!matchesCurrent(dialogResult)) {
@@ -214,12 +227,20 @@ public class AutoSplitPreviewSession {
         int contiguousOwnedOnTop = countContiguousOwnedCommandsOnTop();
         if (contiguousOwnedOnTop != previewOwnedCommands.size()) {
             resetPreviewSessionState();
+            previewInvalidated = true;
             return false;
         }
 
         undoRedoHandler.undo(contiguousOwnedOnTop);
         removeLastOwnedCommands(contiguousOwnedOnTop);
         return true;
+    }
+
+    private boolean isPreviewOwnershipIntact() {
+        if (previewOwnedCommands.isEmpty()) {
+            return true;
+        }
+        return countContiguousOwnedCommandsOnTop() == previewOwnedCommands.size();
     }
 
     private int countContiguousOwnedCommandsOnTop() {
