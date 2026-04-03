@@ -12,10 +12,14 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.awt.event.KeyEvent;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
 import javax.swing.JButton;
+import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
@@ -37,7 +41,9 @@ public class AutoSplitOptionsDialog {
             String startHouseNumber,
             int increment,
             boolean reverseOrder,
-            boolean firstWithoutLetter
+            boolean firstWithoutLetter,
+            String street,
+            String postcode
         );
     }
 
@@ -54,12 +60,18 @@ public class AutoSplitOptionsDialog {
         boolean defaultReverseOrder,
         boolean defaultFirstWithoutLetter,
         String defaultStartHouseNumber,
+        String defaultStreet,
+        String defaultPostcode,
+        List<String> availableStreets,
         PreviewChangeListener previewChangeListener
     ) {
         Frame owner = JOptionPane.getFrameForComponent(parent);
         JDialog dialog = new JDialog(owner, tr("AutoSplit Building"), true);
 
         JTextField houseNumberField = new JTextField(defaultStartHouseNumber == null ? "" : defaultStartHouseNumber, 16);
+        JTextField postcodeField = new JTextField(defaultPostcode == null ? "" : defaultPostcode, 16);
+        JComboBox<String> streetCombo = createStreetCombo(defaultStreet, availableStreets);
+
         JLabel incrementValueLabel = new JLabel();
         JLabel validationLabel = new JLabel(" ");
         validationLabel.setForeground(new Color(180, 0, 0));
@@ -78,8 +90,10 @@ public class AutoSplitOptionsDialog {
             validationLabel.setText(" ");
 
             int parts = selectedParts[0];
+            String startValue = normalizeText(houseNumberField.getText());
+            String streetValue = normalizeText(getComboText(streetCombo));
+            String postcodeValue = normalizeText(postcodeField.getText());
 
-            String startValue = houseNumberField.getText().trim();
             boolean enableFirstWithoutLetter = houseNumberService.supportsFirstWithoutLetter(startValue);
             firstWithoutLetterToggle.setEnabled(enableFirstWithoutLetter);
             if (!enableFirstWithoutLetter) {
@@ -96,7 +110,9 @@ public class AutoSplitOptionsDialog {
                     startValue,
                     increment[0],
                     reverseOrder[0],
-                    firstWithoutLetter[0]
+                    firstWithoutLetter[0],
+                    streetValue,
+                    postcodeValue
                 );
 
             if (previewError != null) {
@@ -131,6 +147,12 @@ public class AutoSplitOptionsDialog {
         };
 
         houseNumberField.getDocument().addDocumentListener(previewUpdateListener);
+        postcodeField.getDocument().addDocumentListener(previewUpdateListener);
+        streetCombo.addActionListener(e -> updatePreview.run());
+        JTextField streetEditor = getComboEditorField(streetCombo);
+        if (streetEditor != null) {
+            streetEditor.getDocument().addDocumentListener(previewUpdateListener);
+        }
 
         JPanel partsPanel = createPartsPanel(selectedParts, updatePreview);
         JButton plusOneButton = createIncrementButton("+1", 1, increment, updatePreview);
@@ -152,8 +174,10 @@ public class AutoSplitOptionsDialog {
 
         okButton.addActionListener(e -> {
             int parts = selectedParts[0];
+            String startValue = normalizeText(houseNumberField.getText());
+            String streetValue = normalizeText(getComboText(streetCombo));
+            String postcodeValue = normalizeText(postcodeField.getText());
 
-            String startValue = houseNumberField.getText().trim();
             if (!startValue.isEmpty()) {
                 try {
                     houseNumberService.generateSequence(startValue, increment[0], parts, firstWithoutLetter[0]);
@@ -168,7 +192,9 @@ public class AutoSplitOptionsDialog {
                 startValue,
                 increment[0],
                 reverseOrder[0],
-                firstWithoutLetter[0]
+                firstWithoutLetter[0],
+                streetValue,
+                postcodeValue
             );
             dialog.dispose();
         });
@@ -178,9 +204,7 @@ public class AutoSplitOptionsDialog {
             dialog.dispose();
         });
 
-        cancelButton.addActionListener(e -> {
-            cancelDialog.run();
-        });
+        cancelButton.addActionListener(e -> cancelDialog.run());
 
         JPanel content = new JPanel(new BorderLayout(10, 10));
         content.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
@@ -188,6 +212,8 @@ public class AutoSplitOptionsDialog {
         JPanel formPanel = createFormPanel(
             partsPanel,
             houseNumberField,
+            streetCombo,
+            postcodeField,
             incrementValueLabel,
             plusOneButton,
             plusTwoButton,
@@ -215,6 +241,42 @@ public class AutoSplitOptionsDialog {
         dialog.setVisible(true);
 
         return result[0];
+    }
+
+    private JComboBox<String> createStreetCombo(String defaultStreet, List<String> availableStreets) {
+        Set<String> entries = new LinkedHashSet<>();
+        entries.add("");
+        if (availableStreets != null) {
+            for (String street : availableStreets) {
+                String normalized = normalizeText(street);
+                if (!normalized.isEmpty()) {
+                    entries.add(normalized);
+                }
+            }
+        }
+        String normalizedDefault = normalizeText(defaultStreet);
+        if (!normalizedDefault.isEmpty()) {
+            entries.add(normalizedDefault);
+        }
+
+        JComboBox<String> combo = new JComboBox<>(entries.toArray(new String[0]));
+        combo.setEditable(true);
+        combo.setSelectedItem(normalizedDefault);
+        return combo;
+    }
+
+    private JTextField getComboEditorField(JComboBox<String> combo) {
+        Object editor = combo.getEditor().getEditorComponent();
+        return editor instanceof JTextField ? (JTextField) editor : null;
+    }
+
+    private String getComboText(JComboBox<String> combo) {
+        Object selectedItem = combo.getEditor().getItem();
+        return selectedItem == null ? "" : selectedItem.toString();
+    }
+
+    private String normalizeText(String text) {
+        return text == null ? "" : text.trim();
     }
 
     private JButton createIncrementButton(String label, int value, int[] increment, Runnable updatePreview) {
@@ -259,6 +321,8 @@ public class AutoSplitOptionsDialog {
     private JPanel createFormPanel(
         JPanel partsPanel,
         JTextField houseNumberField,
+        JComboBox<String> streetCombo,
+        JTextField postcodeField,
         JLabel incrementValueLabel,
         JButton plusOneButton,
         JButton plusTwoButton,
@@ -273,6 +337,8 @@ public class AutoSplitOptionsDialog {
 
         partsPanel.setPreferredSize(new Dimension(320, partsPanel.getPreferredSize().height));
         houseNumberField.setPreferredSize(new Dimension(220, houseNumberField.getPreferredSize().height));
+        postcodeField.setPreferredSize(new Dimension(220, postcodeField.getPreferredSize().height));
+        streetCombo.setPreferredSize(new Dimension(220, streetCombo.getPreferredSize().height));
 
         gbc.gridx = 0;
         gbc.gridy = 0;
@@ -289,6 +355,28 @@ public class AutoSplitOptionsDialog {
         gbc.gridy = 1;
         gbc.weightx = 0;
         gbc.fill = GridBagConstraints.NONE;
+        formPanel.add(new JLabel(tr("Street (optional):")), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        formPanel.add(streetCombo, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 2;
+        gbc.weightx = 0;
+        gbc.fill = GridBagConstraints.NONE;
+        formPanel.add(new JLabel(tr("Postcode (optional):")), gbc);
+
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        formPanel.add(postcodeField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 3;
+        gbc.weightx = 0;
+        gbc.fill = GridBagConstraints.NONE;
         formPanel.add(new JLabel(tr("Starting house number (optional):")), gbc);
 
         gbc.gridx = 1;
@@ -297,7 +385,7 @@ public class AutoSplitOptionsDialog {
         formPanel.add(houseNumberField, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 2;
+        gbc.gridy = 4;
         gbc.weightx = 0;
         gbc.fill = GridBagConstraints.NONE;
         formPanel.add(new JLabel(tr("Increment:")), gbc);
@@ -308,7 +396,7 @@ public class AutoSplitOptionsDialog {
         formPanel.add(createIncrementPanel(incrementValueLabel, plusOneButton, plusTwoButton), gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 3;
+        gbc.gridy = 5;
         gbc.gridwidth = 1;
         gbc.weightx = 0;
         gbc.fill = GridBagConstraints.NONE;
@@ -320,7 +408,7 @@ public class AutoSplitOptionsDialog {
         formPanel.add(reverseOrderToggle, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 4;
+        gbc.gridy = 6;
         gbc.gridwidth = 1;
         gbc.weightx = 0;
         gbc.fill = GridBagConstraints.NONE;
@@ -331,7 +419,7 @@ public class AutoSplitOptionsDialog {
         formPanel.add(firstWithoutLetterToggle, gbc);
 
         gbc.gridx = 0;
-        gbc.gridy = 5;
+        gbc.gridy = 7;
         gbc.gridwidth = 2;
         gbc.weightx = 1.0;
         gbc.fill = GridBagConstraints.HORIZONTAL;
@@ -374,4 +462,3 @@ public class AutoSplitOptionsDialog {
         return buttonPanel;
     }
 }
-

@@ -50,7 +50,9 @@ public class AutoSplitPreviewSession {
         String startHouseNumber,
         int increment,
         boolean reverseOrder,
-        boolean firstWithoutLetter
+        boolean firstWithoutLetter,
+        String street,
+        String postcode
     ) {
         if (!undoPreviewOwnedCommands()) {
             return PREVIEW_RESET_MESSAGE;
@@ -71,10 +73,28 @@ public class AutoSplitPreviewSession {
 
         captureCommandsAddedSince(refreshStartUndoSize);
 
-        String normalizedStart = normalizeStartValue(startHouseNumber);
+        List<Way> createdWays = splitResult.getCreatedWays();
+        String normalizedStreet = normalizeValue(street);
+        String normalizedPostcode = normalizeValue(postcode);
+        if (!normalizedStreet.isEmpty() || !normalizedPostcode.isEmpty()) {
+            List<Command> addressCommands = new ArrayList<>();
+            if (!normalizedStreet.isEmpty()) {
+                addressCommands.add(new ChangePropertyCommand(createdWays, "addr:street", normalizedStreet));
+            }
+            if (!normalizedPostcode.isEmpty()) {
+                addressCommands.add(new ChangePropertyCommand(createdWays, "addr:postcode", normalizedPostcode));
+            }
+            if (!addressCommands.isEmpty()) {
+                int beforeAddressUndoSize = undoRedoHandler.getUndoCommands().size();
+                undoRedoHandler.add(new SequenceCommand(tr("Assign address tags"), addressCommands));
+                captureCommandsAddedSince(beforeAddressUndoSize);
+            }
+        }
+
+        String normalizedStart = normalizeValue(startHouseNumber);
         if (!normalizedStart.isEmpty()) {
-            List<Way> createdWays = orderWaysBySplitAxis(splitResult, reverseOrder);
-            if (createdWays == null) {
+            List<Way> orderedWays = orderWaysBySplitAxis(splitResult, reverseOrder);
+            if (orderedWays == null) {
                 rollbackRefreshAttempt(refreshStartUndoSize);
                 return tr("Failed to determine AutoSplit axis ordering for house numbers.");
             }
@@ -83,7 +103,7 @@ public class AutoSplitPreviewSession {
                 houseNumbers = houseNumberService.generateSequence(
                     normalizedStart,
                     increment,
-                    createdWays.size(),
+                    orderedWays.size(),
                     firstWithoutLetter
                 );
             } catch (IllegalArgumentException ex) {
@@ -91,19 +111,27 @@ public class AutoSplitPreviewSession {
                 return ex.getMessage();
             }
 
-            List<Command> commands = new ArrayList<>();
-            for (int i = 0; i < createdWays.size(); i++) {
-                commands.add(new ChangePropertyCommand(createdWays.get(i), "addr:housenumber", houseNumbers.get(i)));
+            List<Command> houseNumberCommands = new ArrayList<>();
+            for (int i = 0; i < orderedWays.size(); i++) {
+                houseNumberCommands.add(new ChangePropertyCommand(orderedWays.get(i), "addr:housenumber", houseNumbers.get(i)));
             }
-            if (!commands.isEmpty()) {
+            if (!houseNumberCommands.isEmpty()) {
                 int beforeAssignmentUndoSize = undoRedoHandler.getUndoCommands().size();
-                undoRedoHandler.add(new SequenceCommand(tr("Assign house numbers"), commands));
+                undoRedoHandler.add(new SequenceCommand(tr("Assign house numbers"), houseNumberCommands));
                 captureCommandsAddedSince(beforeAssignmentUndoSize);
             }
         }
 
         currentPreviewResult = splitResult;
-        currentAppliedOptions = new AppliedOptions(parts, normalizedStart, increment, reverseOrder, firstWithoutLetter);
+        currentAppliedOptions = new AppliedOptions(
+            parts,
+            normalizedStart,
+            increment,
+            reverseOrder,
+            firstWithoutLetter,
+            normalizedStreet,
+            normalizedPostcode
+        );
         return null;
     }
 
@@ -123,7 +151,9 @@ public class AutoSplitPreviewSession {
                 dialogResult.getStartHouseNumber(),
                 dialogResult.getIncrement(),
                 dialogResult.isReverseOrder(),
-                dialogResult.isFirstWithoutLetter()
+                dialogResult.isFirstWithoutLetter(),
+                dialogResult.getStreet(),
+                dialogResult.getPostcode()
             );
             if (previewError != null) {
                 return SplitResult.failure(previewError);
@@ -142,16 +172,20 @@ public class AutoSplitPreviewSession {
             return false;
         }
 
-        String normalizedStart = normalizeStartValue(dialogResult.getStartHouseNumber());
+        String normalizedStart = normalizeValue(dialogResult.getStartHouseNumber());
+        String normalizedStreet = normalizeValue(dialogResult.getStreet());
+        String normalizedPostcode = normalizeValue(dialogResult.getPostcode());
         return currentAppliedOptions.parts == dialogResult.getParts()
             && currentAppliedOptions.increment == dialogResult.getIncrement()
             && currentAppliedOptions.reverseOrder == dialogResult.isReverseOrder()
             && currentAppliedOptions.firstWithoutLetter == dialogResult.isFirstWithoutLetter()
-            && currentAppliedOptions.startHouseNumber.equals(normalizedStart);
+            && currentAppliedOptions.startHouseNumber.equals(normalizedStart)
+            && currentAppliedOptions.street.equals(normalizedStreet)
+            && currentAppliedOptions.postcode.equals(normalizedPostcode);
     }
 
-    private String normalizeStartValue(String startHouseNumber) {
-        return startHouseNumber == null ? "" : startHouseNumber.trim();
+    private String normalizeValue(String value) {
+        return value == null ? "" : value.trim();
     }
 
     private void rollbackRefreshAttempt(int refreshStartUndoSize) {
@@ -269,19 +303,25 @@ public class AutoSplitPreviewSession {
         private final int increment;
         private final boolean reverseOrder;
         private final boolean firstWithoutLetter;
+        private final String street;
+        private final String postcode;
 
         private AppliedOptions(
             int parts,
             String startHouseNumber,
             int increment,
             boolean reverseOrder,
-            boolean firstWithoutLetter
+            boolean firstWithoutLetter,
+            String street,
+            String postcode
         ) {
             this.parts = parts;
             this.startHouseNumber = startHouseNumber;
             this.increment = increment;
             this.reverseOrder = reverseOrder;
             this.firstWithoutLetter = firstWithoutLetter;
+            this.street = street;
+            this.postcode = postcode;
         }
     }
 }

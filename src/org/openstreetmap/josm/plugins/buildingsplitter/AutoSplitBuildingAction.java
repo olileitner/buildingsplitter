@@ -25,6 +25,7 @@ public class AutoSplitBuildingAction extends JosmAction {
     private final AutoSplitBuildingService autoSplitService;
     private final AutoSplitOptionsDialog optionsDialog;
     private final HouseNumberService houseNumberService;
+    private final VisibleAddressContextService visibleAddressContextService;
 
     public AutoSplitBuildingAction() {
         super(
@@ -44,6 +45,7 @@ public class AutoSplitBuildingAction extends JosmAction {
         this.autoSplitService = new AutoSplitBuildingService();
         this.optionsDialog = new AutoSplitOptionsDialog();
         this.houseNumberService = new HouseNumberService();
+        this.visibleAddressContextService = new VisibleAddressContextService();
     }
 
     @Override
@@ -65,6 +67,8 @@ public class AutoSplitBuildingAction extends JosmAction {
         boolean lastReverseOrder = false;
         boolean lastFirstWithoutLetter = false;
         String lastStartHouseNumber = "";
+        String lastStreet = "";
+        String lastPostcode = visibleAddressContextService.detectUniformVisiblePostcode(dataSet);
         List<Way> lastSuccessfulCreatedWays = Collections.emptyList();
 
         for (Way buildingWay : selectedBuildings) {
@@ -80,6 +84,12 @@ public class AutoSplitBuildingAction extends JosmAction {
                 houseNumberService
             );
 
+            List<String> visibleStreetNames = visibleAddressContextService.collectVisibleStreetNames(dataSet);
+            String suggestedPostcode = visibleAddressContextService.detectUniformVisiblePostcode(dataSet);
+            if (lastPostcode.isEmpty() && !suggestedPostcode.isEmpty()) {
+                lastPostcode = suggestedPostcode;
+            }
+
             AutoSplitDialogResult dialogResult = optionsDialog.showDialog(
                 MainApplication.getMainFrame(),
                 lastPartsValue,
@@ -87,6 +97,9 @@ public class AutoSplitBuildingAction extends JosmAction {
                 lastReverseOrder,
                 lastFirstWithoutLetter,
                 lastStartHouseNumber,
+                lastStreet,
+                lastPostcode,
+                visibleStreetNames,
                 previewSession::refreshPreview
             );
             if (dialogResult.isCancel()) {
@@ -104,6 +117,8 @@ public class AutoSplitBuildingAction extends JosmAction {
             lastReverseOrder = dialogResult.isReverseOrder();
             lastFirstWithoutLetter = dialogResult.isFirstWithoutLetter();
             lastStartHouseNumber = dialogResult.getStartHouseNumber();
+            lastStreet = dialogResult.getStreet();
+            lastPostcode = dialogResult.getPostcode();
 
             SplitResult result = previewSession.finalizePreview(dialogResult);
             if (!result.isSuccess()) {

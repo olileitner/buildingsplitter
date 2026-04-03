@@ -14,6 +14,8 @@ public final class AutoSplitDialogResult {
     private final int increment;
     private final boolean reverseOrder;
     private final boolean firstWithoutLetter;
+    private final String street;
+    private final String postcode;
 
     private AutoSplitDialogResult(
         Outcome outcome,
@@ -21,7 +23,9 @@ public final class AutoSplitDialogResult {
         String startHouseNumber,
         int increment,
         boolean reverseOrder,
-        boolean firstWithoutLetter
+        boolean firstWithoutLetter,
+        String street,
+        String postcode
     ) {
         this.outcome = outcome;
         this.parts = parts;
@@ -29,6 +33,8 @@ public final class AutoSplitDialogResult {
         this.increment = increment;
         this.reverseOrder = reverseOrder;
         this.firstWithoutLetter = firstWithoutLetter;
+        this.street = street;
+        this.postcode = postcode;
     }
 
     public static AutoSplitDialogResult apply(
@@ -36,17 +42,28 @@ public final class AutoSplitDialogResult {
         String startHouseNumber,
         int increment,
         boolean reverseOrder,
-        boolean firstWithoutLetter
+        boolean firstWithoutLetter,
+        String street,
+        String postcode
     ) {
-        return new AutoSplitDialogResult(Outcome.APPLY, parts, startHouseNumber, increment, reverseOrder, firstWithoutLetter);
+        return new AutoSplitDialogResult(
+            Outcome.APPLY,
+            parts,
+            startHouseNumber,
+            increment,
+            reverseOrder,
+            firstWithoutLetter,
+            street,
+            postcode
+        );
     }
 
     public static AutoSplitDialogResult skip() {
-        return new AutoSplitDialogResult(Outcome.SKIP, 0, "", 0, false, false);
+        return new AutoSplitDialogResult(Outcome.SKIP, 0, "", 0, false, false, "", "");
     }
 
     public static AutoSplitDialogResult cancel() {
-        return new AutoSplitDialogResult(Outcome.CANCEL, 0, "", 0, false, false);
+        return new AutoSplitDialogResult(Outcome.CANCEL, 0, "", 0, false, false, "", "");
     }
 
     public boolean isSkip() {
@@ -76,5 +93,12 @@ public final class AutoSplitDialogResult {
     public boolean isFirstWithoutLetter() {
         return firstWithoutLetter;
     }
-}
 
+    public String getStreet() {
+        return street;
+    }
+
+    public String getPostcode() {
+        return postcode;
+    }
+}

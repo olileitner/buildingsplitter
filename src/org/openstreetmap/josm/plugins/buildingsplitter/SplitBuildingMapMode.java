@@ -63,6 +63,7 @@ public class SplitBuildingMapMode extends MapMode {
     private final AutoSplitBuildingService autoSplitService;
     private final AutoSplitOptionsDialog autoSplitOptionsDialog;
     private final HouseNumberService houseNumberService;
+    private final VisibleAddressContextService visibleAddressContextService;
     private final PreviewLinePaintable previewLinePaintable;
 
     private LatLon dragStart;
@@ -80,6 +81,8 @@ public class SplitBuildingMapMode extends MapMode {
     private boolean lastAutoSplitReverseOrder;
     private boolean lastAutoSplitFirstWithoutLetter;
     private String lastAutoSplitStartHouseNumber = "";
+    private String lastAutoSplitStreet = "";
+    private String lastAutoSplitPostcode = "";
 
     private KeyEventDispatcher escKeyDispatcher;
 
@@ -97,6 +100,7 @@ public class SplitBuildingMapMode extends MapMode {
         this.autoSplitService = new AutoSplitBuildingService();
         this.autoSplitOptionsDialog = new AutoSplitOptionsDialog();
         this.houseNumberService = new HouseNumberService();
+        this.visibleAddressContextService = new VisibleAddressContextService();
         this.previewLinePaintable = new PreviewLinePaintable();
         this.snapCandidates = new ArrayList<>();
         putValue(SMALL_ICON, ImageProvider.get("mapmode", "buildingsplitter"));
@@ -666,6 +670,12 @@ public class SplitBuildingMapMode extends MapMode {
             houseNumberService
         );
 
+        List<String> visibleStreetNames = visibleAddressContextService.collectVisibleStreetNames(dataSet);
+        String suggestedPostcode = visibleAddressContextService.detectUniformVisiblePostcode(dataSet);
+        if (lastAutoSplitPostcode.isEmpty() && !suggestedPostcode.isEmpty()) {
+            lastAutoSplitPostcode = suggestedPostcode;
+        }
+
         AutoSplitDialogResult dialogResult = autoSplitOptionsDialog.showDialog(
             MainApplication.getMainFrame(),
             lastAutoSplitParts,
@@ -673,6 +683,9 @@ public class SplitBuildingMapMode extends MapMode {
             lastAutoSplitReverseOrder,
             lastAutoSplitFirstWithoutLetter,
             lastAutoSplitStartHouseNumber,
+            lastAutoSplitStreet,
+            lastAutoSplitPostcode,
+            visibleStreetNames,
             previewSession::refreshPreview
         );
 
@@ -693,6 +706,8 @@ public class SplitBuildingMapMode extends MapMode {
         lastAutoSplitReverseOrder = dialogResult.isReverseOrder();
         lastAutoSplitFirstWithoutLetter = dialogResult.isFirstWithoutLetter();
         lastAutoSplitStartHouseNumber = dialogResult.getStartHouseNumber();
+        lastAutoSplitStreet = dialogResult.getStreet();
+        lastAutoSplitPostcode = dialogResult.getPostcode();
 
         List<Way> createdWays = result.getCreatedWays();
         if (!createdWays.isEmpty()) {
