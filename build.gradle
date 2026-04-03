@@ -5,7 +5,7 @@ plugins {
 import java.util.Locale
 
 group = 'org.openstreetmap.josm.plugins'
-version = '1.0.2'
+version = '1.0.3'
 
 def pluginJarName = 'buildingsplitter.jar'
 
@@ -77,12 +77,13 @@ tasks.jar {
         attributes(
             'Plugin-Class': 'org.openstreetmap.josm.plugins.buildingsplitter.BuildingSplitterPlugin',
             'Plugin-Description': 'Split building ways manually or with AutoSplit',
-            'Plugin-Version': '1.0.2',
+            'Plugin-Version': '1.0.3',
             'Plugin-Mainversion': '19000',
             'Author': 'Oliver Leitner',
             'Plugin-Link': 'https://github.com/olileitner/buildingsplitter',
             'Plugin-Icon': 'images/buildingsplitter.svg',
-            'Plugin-Minimum-Java-Version': '11'
+            'Plugin-Minimum-Java-Version': '11',
+            'Plugin-License': 'GPL-2.0-only'
         )
     }
 }
@@ -130,4 +131,3 @@ tasks.register('runJosmDebug', JavaExec) {
     // Windows path example:
     // %APPDATA%\\JOSM\\plugins\\
 }
-
