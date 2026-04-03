@@ -182,7 +182,13 @@ public class AutoSplitBuildingService {
         selection.add(splitNodes.get(1));
         dataSet.setSelected(selection);
 
-        return splitService.splitSelectedBuilding(dataSet);
+        SplitExecutionResult detailedResult = splitService.splitSelectedBuildingDetailed(dataSet);
+        if (!detailedResult.isSuccess()) {
+            return SplitResult.failure(detailedResult.getMessage());
+        }
+
+        // Keep AutoSplit consumers on a stable deterministic order during iterative splits.
+        return SplitResult.success(detailedResult.getMessage(), detailedResult.getResultWaysOrdered());
     }
 
     private List<IntersectionPoint> computeDirectInterpolatedIntersections(Way way, Vector2D mainAxis, double splitPosition) {

@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -64,6 +66,7 @@ class AutoSplitBuildingServiceTest {
 
         List<Way> createdWays = result.getCreatedWays();
         assertEquals(2, createdWays.size());
+        assertTrue(createdWays.contains(originalBuilding));
 
         for (Way createdWay : createdWays) {
             assertTrue(createdWay.isClosed());
@@ -90,12 +93,16 @@ class AutoSplitBuildingServiceTest {
 
         List<Way> createdWays = result.getCreatedWays();
         assertEquals(3, createdWays.size());
+        assertTrue(createdWays.contains(originalBuilding));
         for (Way createdWay : createdWays) {
             assertTrue(createdWay.isClosed());
             assertFalse(createdWay.isDeleted());
             assertEquals("yes", createdWay.get("building"));
             assertTrue(createdWay.getNodesCount() >= 4);
         }
+
+        Set<Long> uniqueWayIds = createdWays.stream().map(Way::getUniqueId).collect(Collectors.toSet());
+        assertEquals(3, uniqueWayIds.size());
 
         List<Way> selectedWays = dataSet.getSelectedWays().stream().toList();
         assertEquals(3, selectedWays.size());
@@ -110,7 +117,7 @@ class AutoSplitBuildingServiceTest {
         AutoSplitBuildingService crashingService = new AutoSplitBuildingService();
         injectSplitService(crashingService, new BuildingSplitService() {
             @Override
-            public SplitResult splitSelectedBuilding(DataSet ignoredDataSet) {
+            public SplitExecutionResult splitSelectedBuildingDetailed(DataSet ignoredDataSet) {
                 throw new RuntimeException("simulated crash");
             }
         });
@@ -120,6 +127,25 @@ class AutoSplitBuildingServiceTest {
         assertFalse(result.isSuccess());
         assertEquals("AutoSplit failed unexpectedly. Changes were rolled back.", result.getMessage());
         assertFalse(originalBuilding.isDeleted());
+    }
+
+    @Test
+    void iterativeSplitIntoFourPartsKeepsOriginalAndReturnsStableResultSet() {
+        DataSet dataSet = new DataSet();
+        Way originalBuilding = createClosedRectBuilding(dataSet, true);
+
+        SplitResult result = service.autoSplitBuilding(dataSet, originalBuilding, 4);
+
+        assertTrue(result.isSuccess());
+        assertFalse(originalBuilding.isDeleted());
+
+        List<Way> createdWays = result.getCreatedWays();
+        assertEquals(4, createdWays.size());
+        assertTrue(createdWays.contains(originalBuilding));
+
+        Set<Long> uniqueWayIds = createdWays.stream().map(Way::getUniqueId).collect(Collectors.toSet());
+        assertEquals(4, uniqueWayIds.size());
+        assertTrue(createdWays.stream().allMatch(way -> !way.isDeleted() && way.hasKey("building") && way.isClosed()));
     }
 
     private void injectSplitService(AutoSplitBuildingService target, BuildingSplitService replacement) throws Exception {

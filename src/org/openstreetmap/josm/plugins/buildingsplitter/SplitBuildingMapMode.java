@@ -539,15 +539,15 @@ public class SplitBuildingMapMode extends MapMode {
         splitSelection.add(secondNode);
         dataSet.setSelected(splitSelection);
 
-        SplitResult result = splitService.splitSelectedBuilding(dataSet);
+        SplitExecutionResult result = splitService.splitSelectedBuildingDetailed(dataSet);
         if (!result.isSuccess()) {
             rollbackToUndoSize(undoStartSize);
             showError(result.getMessage());
             return;
         }
 
-        if (!result.getCreatedWays().isEmpty()) {
-            dataSet.setSelected(result.getCreatedWays());
+        if (!result.getResultWaysOrdered().isEmpty()) {
+            dataSet.setSelected(result.getResultWaysOrdered());
         }
         clearClickSelection();
     }
@@ -794,13 +794,13 @@ public class SplitBuildingMapMode extends MapMode {
         splitSelection.add(splitNodes.get(1));
         dataSet.setSelected(splitSelection);
 
-        SplitResult splitResult = splitService.splitSelectedBuilding(dataSet);
+        SplitExecutionResult splitResult = splitService.splitSelectedBuildingDetailed(dataSet);
         if (!splitResult.isSuccess()) {
             showError(splitResult.getMessage());
             return;
         }
 
-        List<Way> createdWays = splitResult.getCreatedWays();
+        List<Way> createdWays = splitResult.getResultWaysOrdered();
         if (createdWays.size() != 2 || createdWays.get(0).isDeleted() || createdWays.get(1).isDeleted()) {
             showError(tr("Split completed but resulting building ways could not be selected."));
             return;
