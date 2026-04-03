@@ -69,6 +69,11 @@ public class AutoSplitBuildingAction extends JosmAction {
         String lastStartHouseNumber = "";
         String lastStreet = "";
         String lastPostcode = visibleAddressContextService.detectUniformVisiblePostcode(dataSet);
+
+        AddressContextBridge.AddressContext externalContext = AddressContextBridge.consumeAddressContext();
+        String externalStreet = externalContext == null ? "" : externalContext.getStreet();
+        String externalPostcode = externalContext == null ? "" : externalContext.getPostcode();
+
         List<Way> lastSuccessfulCreatedWays = Collections.emptyList();
 
         for (Way buildingWay : selectedBuildings) {
@@ -86,9 +91,10 @@ public class AutoSplitBuildingAction extends JosmAction {
 
             List<String> visibleStreetNames = visibleAddressContextService.collectVisibleStreetNames(dataSet);
             String suggestedPostcode = visibleAddressContextService.detectUniformVisiblePostcode(dataSet);
-            if (lastPostcode.isEmpty() && !suggestedPostcode.isEmpty()) {
-                lastPostcode = suggestedPostcode;
-            }
+            String defaultStreet = !externalStreet.isEmpty() ? externalStreet : lastStreet;
+            String defaultPostcode = !externalPostcode.isEmpty()
+                ? externalPostcode
+                : (!lastPostcode.isEmpty() ? lastPostcode : suggestedPostcode);
 
             AutoSplitDialogResult dialogResult = optionsDialog.showDialog(
                 MainApplication.getMainFrame(),
@@ -97,8 +103,8 @@ public class AutoSplitBuildingAction extends JosmAction {
                 lastReverseOrder,
                 lastFirstWithoutLetter,
                 lastStartHouseNumber,
-                lastStreet,
-                lastPostcode,
+                defaultStreet,
+                defaultPostcode,
                 visibleStreetNames,
                 previewSession::refreshPreview
             );

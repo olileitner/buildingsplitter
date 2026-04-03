@@ -672,9 +672,13 @@ public class SplitBuildingMapMode extends MapMode {
 
         List<String> visibleStreetNames = visibleAddressContextService.collectVisibleStreetNames(dataSet);
         String suggestedPostcode = visibleAddressContextService.detectUniformVisiblePostcode(dataSet);
-        if (lastAutoSplitPostcode.isEmpty() && !suggestedPostcode.isEmpty()) {
-            lastAutoSplitPostcode = suggestedPostcode;
-        }
+        AddressContextBridge.AddressContext externalContext = AddressContextBridge.consumeAddressContext();
+        String externalStreet = externalContext == null ? "" : externalContext.getStreet();
+        String externalPostcode = externalContext == null ? "" : externalContext.getPostcode();
+        String defaultStreet = !externalStreet.isEmpty() ? externalStreet : lastAutoSplitStreet;
+        String defaultPostcode = !externalPostcode.isEmpty()
+            ? externalPostcode
+            : (!lastAutoSplitPostcode.isEmpty() ? lastAutoSplitPostcode : suggestedPostcode);
 
         AutoSplitDialogResult dialogResult = autoSplitOptionsDialog.showDialog(
             MainApplication.getMainFrame(),
@@ -683,8 +687,8 @@ public class SplitBuildingMapMode extends MapMode {
             lastAutoSplitReverseOrder,
             lastAutoSplitFirstWithoutLetter,
             lastAutoSplitStartHouseNumber,
-            lastAutoSplitStreet,
-            lastAutoSplitPostcode,
+            defaultStreet,
+            defaultPostcode,
             visibleStreetNames,
             previewSession::refreshPreview
         );
