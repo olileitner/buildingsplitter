@@ -25,9 +25,17 @@ public class BuildingSplitService {
     private static final Set<String> EXCLUDED_TAGS = Set.of("addr:housenumber");
 
     public SplitResult splitSelectedBuilding(DataSet dataSet) {
+        SplitExecutionResult detailedResult = splitSelectedBuildingDetailed(dataSet);
+        if (!detailedResult.isSuccess()) {
+            return SplitResult.failure(detailedResult.getMessage());
+        }
+        return SplitResult.success(detailedResult.getMessage(), detailedResult.getResultWaysOrdered());
+    }
+
+    public SplitExecutionResult splitSelectedBuildingDetailed(DataSet dataSet) {
         ValidationResult validation = validateSelection(dataSet);
         if (!validation.isValid()) {
-            return SplitResult.failure(validation.message());
+            return SplitExecutionResult.failure(validation.message(), null);
         }
 
         Way sourceWay = validation.sourceWay();
@@ -36,14 +44,20 @@ public class BuildingSplitService {
 
         RingPaths ringPaths = extractRingPaths(sourceWay, firstSplitNode, secondSplitNode);
         if (ringPaths == null) {
-            return SplitResult.failure(tr("Unable to compute split paths for the selected building outline."));
+            return SplitExecutionResult.failure(
+                tr("Unable to compute split paths for the selected building outline."),
+                sourceWay
+            );
         }
 
         List<Node> polygonANodes = buildClosedPolygon(ringPaths.pathFromFirstToSecond());
         List<Node> polygonBNodes = buildClosedPolygon(ringPaths.pathFromSecondToFirst());
 
         if (!isValidClosedPolygon(polygonANodes) || !isValidClosedPolygon(polygonBNodes)) {
-            return SplitResult.failure(tr("Split points would create invalid polygons. Choose non-adjacent corners that form two valid areas."));
+            return SplitExecutionResult.failure(
+                tr("Split points would create invalid polygons. Choose non-adjacent corners that form two valid areas."),
+                sourceWay
+            );
         }
 
         Way splitWayA = new Way();
@@ -56,7 +70,13 @@ public class BuildingSplitService {
 
         SequenceCommand splitCommand = buildSplitCommand(dataSet, sourceWay, splitWayA, splitWayB);
         UndoRedoHandler.getInstance().add(splitCommand);
-        return SplitResult.success(tr("Building split completed."), Arrays.asList(splitWayA, splitWayB));
+        List<Way> orderedWays = Arrays.asList(splitWayA, splitWayB);
+        return SplitExecutionResult.success(
+            tr("Building split completed."),
+            sourceWay,
+            Arrays.asList(splitWayA, splitWayB),
+            orderedWays
+        );
     }
 
     private ValidationResult validateSelection(DataSet dataSet) {

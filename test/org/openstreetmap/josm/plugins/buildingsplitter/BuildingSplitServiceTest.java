@@ -163,6 +163,53 @@ class BuildingSplitServiceTest {
         }
     }
 
+    @Test
+    void detailedResultExposesOriginalAndOrderedWays() {
+        DataSet dataSet = new DataSet();
+        RectFixture rect = createClosedRectBuilding(dataSet, true);
+
+        setSelection(dataSet, rect.way, rect.n1, rect.n3);
+
+        SplitExecutionResult detailed = service.splitSelectedBuildingDetailed(dataSet);
+
+        assertTrue(detailed.isSuccess());
+        assertEquals(rect.way, detailed.getOriginalWay());
+        assertEquals(2, detailed.getNewWays().size());
+        assertEquals(detailed.getNewWays(), detailed.getResultWaysOrdered());
+        for (Way way : detailed.getResultWaysOrdered()) {
+            assertTrue(way.isClosed());
+            assertTrue(way.hasKey("building"));
+        }
+    }
+
+    @Test
+    void legacySplitResultRemainsCompatibleWithDetailedResult() {
+        DataSet dataSet = new DataSet();
+        RectFixture rect = createClosedRectBuilding(dataSet, true);
+
+        setSelection(dataSet, rect.way, rect.n1, rect.n3);
+
+        SplitResult legacy = service.splitSelectedBuilding(dataSet);
+
+        assertTrue(legacy.isSuccess());
+        assertEquals(2, legacy.getCreatedWays().size());
+        assertTrue(rect.way.isDeleted());
+        for (Way way : legacy.getCreatedWays()) {
+            assertTrue(way.isClosed());
+            assertTrue(way.hasKey("building"));
+        }
+    }
+
+    @Test
+    void detailedFailureContainsMessageAndEmptyResultWays() {
+        SplitExecutionResult detailed = service.splitSelectedBuildingDetailed(null);
+
+        assertFalse(detailed.isSuccess());
+        assertNotNull(detailed.getMessage());
+        assertTrue(detailed.getNewWays().isEmpty());
+        assertTrue(detailed.getResultWaysOrdered().isEmpty());
+    }
+
     private Node createNode(DataSet dataSet, double lat, double lon) {
         Node node = new Node(new LatLon(lat, lon));
         dataSet.addPrimitive(node);

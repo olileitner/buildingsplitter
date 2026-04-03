@@ -14,6 +14,8 @@ import org.openstreetmap.josm.tools.Shortcut;
 
 public class SplitBuildingAction extends JosmAction {
 
+    private SplitBuildingMapMode registeredMapMode;
+
     public SplitBuildingAction() {
         super(
             tr("Split Building"),
@@ -44,8 +46,20 @@ public class SplitBuildingAction extends JosmAction {
             return;
         }
 
-        SplitBuildingMapMode mapMode = new SplitBuildingMapMode();
+        SplitBuildingMapMode mapMode = resolveMapModeForActivation();
         MainApplication.getMap().selectMapMode(mapMode);
+    }
+
+    void setRegisteredMapMode(SplitBuildingMapMode mapMode) {
+        this.registeredMapMode = mapMode;
+    }
+
+    SplitBuildingMapMode getRegisteredMapMode() {
+        return registeredMapMode;
+    }
+
+    SplitBuildingMapMode resolveMapModeForActivation() {
+        return registeredMapMode != null ? registeredMapMode : new SplitBuildingMapMode();
     }
 
     @Override

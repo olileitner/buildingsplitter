@@ -12,6 +12,7 @@ public class BuildingSplitterPlugin extends Plugin {
     private final SplitBuildingAction splitBuildingAction;
     private final AutoSplitBuildingAction autoSplitBuildingAction;
     private MapFrame registeredMapFrame;
+    private SplitBuildingMapMode registeredSplitBuildingMapMode;
 
     public BuildingSplitterPlugin(PluginInformation info) {
         super(info);
@@ -33,6 +34,8 @@ public class BuildingSplitterPlugin extends Plugin {
         if (newFrame == null) {
             if (oldFrame != null && oldFrame == registeredMapFrame) {
                 registeredMapFrame = null;
+                registeredSplitBuildingMapMode = null;
+                splitBuildingAction.setRegisteredMapMode(null);
             }
             return;
         }
@@ -42,11 +45,14 @@ public class BuildingSplitterPlugin extends Plugin {
         ensureAutoSplitToolbarButton();
 
         if (newFrame == registeredMapFrame) {
+            splitBuildingAction.setRegisteredMapMode(registeredSplitBuildingMapMode);
             return;
         }
 
-        newFrame.addMapMode(new IconToggleButton(new SplitBuildingMapMode()));
+        registeredSplitBuildingMapMode = new SplitBuildingMapMode();
+        newFrame.addMapMode(new IconToggleButton(registeredSplitBuildingMapMode));
         registeredMapFrame = newFrame;
+        splitBuildingAction.setRegisteredMapMode(registeredSplitBuildingMapMode);
     }
 
     private void ensureAutoSplitToolbarButton() {
