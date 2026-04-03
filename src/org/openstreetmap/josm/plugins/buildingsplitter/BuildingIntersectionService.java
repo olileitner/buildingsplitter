@@ -132,6 +132,11 @@ public class BuildingIntersectionService {
                 return SegmentIntersection.none();
             }
 
+            LatLon sharedEndpointTouch = detectSharedEndpointTouch(p1, p2, q1, q2);
+            if (sharedEndpointTouch != null) {
+                return SegmentIntersection.point(sharedEndpointTouch);
+            }
+
             // Collinear case: a single shared endpoint is a valid vertex touch,
             // but a shared segment length remains an unsupported edge overlap.
             LatLon collinearTouchPoint = findSingleCollinearTouchPoint(p1, p2, q1, q2);
@@ -162,6 +167,16 @@ public class BuildingIntersectionService {
         }
 
         return SegmentIntersection.point(intersectionPoint);
+    }
+
+    private LatLon detectSharedEndpointTouch(LatLon p1, LatLon p2, LatLon q1, LatLon q2) {
+        if (isSamePoint(p1, q1) || isSamePoint(p1, q2)) {
+            return p1;
+        }
+        if (isSamePoint(p2, q1) || isSamePoint(p2, q2)) {
+            return p2;
+        }
+        return null;
     }
 
     private LatLon findSingleCollinearTouchPoint(LatLon p1, LatLon p2, LatLon q1, LatLon q2) {

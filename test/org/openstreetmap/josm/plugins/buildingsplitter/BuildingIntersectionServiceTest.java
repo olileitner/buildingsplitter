@@ -156,6 +156,21 @@ class BuildingIntersectionServiceTest {
         assertEquals("Line overlaps building edge; not supported", result.getMessage());
     }
 
+    @Test
+    void collinearSharedEndpointTouchIsNotClassifiedAsOverlap() {
+        DataSet dataSet = new DataSet();
+        Way rectangle = createClosedRectangle(dataSet);
+
+        IntersectionResult result = service.findSplitIntersections(
+            rectangle,
+            new LatLon(0.0, 0.0),
+            new LatLon(-1.0, 0.0)
+        );
+
+        assertFalse(result.isSuccess());
+        assertEquals("Line touches building only once", result.getMessage());
+    }
+
     private Way createClosedRectangle(DataSet dataSet) {
         Node n1 = createNode(dataSet, 0.0, 0.0);
         Node n2 = createNode(dataSet, 0.0, 2.0);
