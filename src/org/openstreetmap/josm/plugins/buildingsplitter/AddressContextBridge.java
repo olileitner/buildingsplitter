@@ -1,9 +1,16 @@
 package org.openstreetmap.josm.plugins.buildingsplitter;
 
+import org.openstreetmap.josm.spi.preferences.Config;
+import org.openstreetmap.josm.tools.Logging;
+
 /**
  * Lightweight one-shot bridge for external address context providers.
  */
 public final class AddressContextBridge {
+
+    public static final String HANDOFF_STREET_KEY = "quickaddressfill.buildingsplitter.handoff.street";
+    public static final String HANDOFF_POSTCODE_KEY = "quickaddressfill.buildingsplitter.handoff.postcode";
+    public static final String HANDOFF_PENDING_KEY = "quickaddressfill.buildingsplitter.handoff.pending";
 
     private static AddressContext pendingContext;
 
@@ -16,9 +23,36 @@ public final class AddressContextBridge {
     }
 
     public static synchronized AddressContext consumeAddressContext() {
-        AddressContext context = pendingContext;
+        AddressContext inMemoryContext = pendingContext;
         pendingContext = null;
-        return context;
+        if (inMemoryContext != null) {
+            Logging.info("BuildingSplitter: bridge context consumed.");
+            return inMemoryContext;
+        }
+
+        boolean pendingPreferenceHandoff = Config.getPref().getBoolean(HANDOFF_PENDING_KEY, false);
+        if (!pendingPreferenceHandoff) {
+            Logging.info("BuildingSplitter: no external context found.");
+            return null;
+        }
+
+        String street = normalize(Config.getPref().get(HANDOFF_STREET_KEY, ""));
+        String postcode = normalize(Config.getPref().get(HANDOFF_POSTCODE_KEY, ""));
+        clearPreferenceFallback();
+
+        if (street.isEmpty() && postcode.isEmpty()) {
+            Logging.info("BuildingSplitter: no external context found.");
+            return null;
+        }
+
+        Logging.info("BuildingSplitter: preference fallback consumed.");
+        return new AddressContext(street, postcode);
+    }
+
+    private static void clearPreferenceFallback() {
+        Config.getPref().put(HANDOFF_STREET_KEY, null);
+        Config.getPref().put(HANDOFF_POSTCODE_KEY, null);
+        Config.getPref().put(HANDOFF_PENDING_KEY, null);
     }
 
     private static String normalize(String value) {
