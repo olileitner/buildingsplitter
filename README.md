@@ -2,6 +2,10 @@
 
 JOSM plugin for splitting building ways.
 
+## Demo
+
+![BuildingSplitter Demo](docs/images/bs-demo.gif)
+
 ## Features
 
 - Manual mode: split a building by drawing a split line.
@@ -81,4 +85,3 @@ Push with upstream:
 ```bash
 git push -u origin "$(git branch --show-current)"
 ```
-
