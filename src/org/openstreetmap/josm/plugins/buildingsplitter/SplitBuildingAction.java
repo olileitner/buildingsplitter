@@ -47,6 +47,10 @@ public class SplitBuildingAction extends JosmAction {
         }
 
         SplitBuildingMapMode mapMode = resolveMapModeForActivation();
+        if (mapMode == null) {
+            showError(tr("Split Building tool is not initialized yet. Please retry after the map view is ready."), JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
         MainApplication.getMap().selectMapMode(mapMode);
     }
 
@@ -59,7 +63,7 @@ public class SplitBuildingAction extends JosmAction {
     }
 
     SplitBuildingMapMode resolveMapModeForActivation() {
-        return registeredMapMode != null ? registeredMapMode : new SplitBuildingMapMode();
+        return registeredMapMode;
     }
 
     @Override

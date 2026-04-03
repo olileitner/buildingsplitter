@@ -60,22 +60,13 @@ public class BuildingSplitService {
         SplitWayCommand splitCommand;
         try {
             // Keep existing geometry preparation and delegate relation-aware split command creation to JOSM core.
-            // This uses doSplitWay to keep a closed chunk on the original way object.
+            // Use splitWay with explicit strategy and relation-order policy so relation handling stays in JOSM core.
             List<List<Node>> splitChunks = Arrays.asList(polygonANodes, polygonBNodes);
-            List<Way> chunkWays = SplitWayCommand.createNewWaysFromChunks(sourceWay, splitChunks);
-            if (chunkWays.size() != 2) {
-                return SplitExecutionResult.failure(tr("Building split could not be executed."), sourceWay);
-            }
-
-            Way wayToKeep = chunkWays.get(0);
-            List<Way> otherWays = new ArrayList<>();
-            otherWays.add(chunkWays.get(1));
-
-            Optional<SplitWayCommand> splitCommandOptional = SplitWayCommand.doSplitWay(
+            Optional<SplitWayCommand> splitCommandOptional = SplitWayCommand.splitWay(
                 sourceWay,
-                wayToKeep,
-                otherWays,
-                new ArrayList<>(dataSet.getSelected()),
+                splitChunks,
+                dataSet.getSelected(),
+                SplitWayCommand.Strategy.keepFirstChunk(),
                 SplitWayCommand.WhenRelationOrderUncertain.SPLIT_ANYWAY
             );
             if (splitCommandOptional.isEmpty()) {

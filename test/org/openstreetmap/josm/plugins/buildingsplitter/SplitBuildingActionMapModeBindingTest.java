@@ -9,10 +9,11 @@ import java.lang.reflect.Field;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.openstreetmap.josm.gui.MainApplication;
 import org.openstreetmap.josm.spi.preferences.Config;
 import org.openstreetmap.josm.spi.preferences.MemoryPreferences;
 
-import sun.misc.Unsafe;
+import javax.swing.JPanel;
 
 class SplitBuildingActionMapModeBindingTest {
 
@@ -21,12 +22,23 @@ class SplitBuildingActionMapModeBindingTest {
         if (Config.getPref() == null) {
             Config.setPreferencesInstance(new MemoryPreferences());
         }
+        setMainApplicationContentPaneForShortcutRegistration();
+    }
+
+    private static void setMainApplicationContentPaneForShortcutRegistration() {
+        try {
+            Field contentPaneField = MainApplication.class.getDeclaredField("contentPanePrivate");
+            contentPaneField.setAccessible(true);
+            contentPaneField.set(null, new JPanel());
+        } catch (ReflectiveOperationException ex) {
+            throw new IllegalStateException("Failed to initialize MainApplication test content pane.", ex);
+        }
     }
 
     @Test
-    void resolveMapModeForActivationUsesRegisteredInstance() throws Exception {
+    void resolveMapModeForActivationUsesRegisteredInstance() {
         SplitBuildingAction action = new SplitBuildingAction();
-        SplitBuildingMapMode registered = allocateSplitBuildingMapModeWithoutConstructor();
+        SplitBuildingMapMode registered = new SplitBuildingMapMode();
 
         action.setRegisteredMapMode(registered);
 
@@ -44,10 +56,10 @@ class SplitBuildingActionMapModeBindingTest {
     }
 
     @Test
-    void resolveMapModeForActivationUsesNewestRegisteredInstance() throws Exception {
+    void resolveMapModeForActivationUsesNewestRegisteredInstance() {
         SplitBuildingAction action = new SplitBuildingAction();
-        SplitBuildingMapMode firstRegistered = allocateSplitBuildingMapModeWithoutConstructor();
-        SplitBuildingMapMode secondRegistered = allocateSplitBuildingMapModeWithoutConstructor();
+        SplitBuildingMapMode firstRegistered = new SplitBuildingMapMode();
+        SplitBuildingMapMode secondRegistered = new SplitBuildingMapMode();
 
         action.setRegisteredMapMode(firstRegistered);
         action.setRegisteredMapMode(secondRegistered);
@@ -58,14 +70,10 @@ class SplitBuildingActionMapModeBindingTest {
         assertNotNull(action.getRegisteredMapMode());
     }
 
-    private SplitBuildingMapMode allocateSplitBuildingMapModeWithoutConstructor() throws Exception {
-        return (SplitBuildingMapMode) unsafe().allocateInstance(SplitBuildingMapMode.class);
-    }
-
-    private Unsafe unsafe() throws Exception {
-        Field field = Unsafe.class.getDeclaredField("theUnsafe");
-        field.setAccessible(true);
-        return (Unsafe) field.get(null);
+    @Test
+    void resolveMapModeForActivationReturnsNullWithoutRegisteredInstance() {
+        SplitBuildingAction action = new SplitBuildingAction();
+        assertNull(action.resolveMapModeForActivation());
     }
 }
 

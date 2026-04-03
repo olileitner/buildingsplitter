@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
@@ -17,6 +18,8 @@ import org.openstreetmap.josm.data.coor.LatLon;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Node;
 import org.openstreetmap.josm.data.osm.OsmPrimitive;
+import org.openstreetmap.josm.data.osm.Relation;
+import org.openstreetmap.josm.data.osm.RelationMember;
 import org.openstreetmap.josm.data.osm.Way;
 import org.openstreetmap.josm.spi.preferences.Config;
 import org.openstreetmap.josm.spi.preferences.MemoryPreferences;
@@ -245,6 +248,103 @@ class BuildingSplitServiceTest {
         assertTrue(detailed.getResultWaysOrdered().isEmpty());
     }
 
+    @Test
+    void multipolygonRelationKeepsOuterMembersForAllResultWays() {
+        UndoRedoHandler.getInstance().clean();
+        DataSet dataSet = new DataSet();
+        RectFixture rect = createClosedRectBuilding(dataSet, true);
+        Relation relation = createRelation(dataSet, "multipolygon", "outer", rect.way);
+
+        setSelection(dataSet, rect.way, rect.n1, rect.n3);
+
+        SplitExecutionResult result = service.splitSelectedBuildingDetailed(dataSet);
+        assertTrue(result.isSuccess());
+
+        List<Way> outerMembers = activeWayMembersWithRole(relation, "outer");
+        assertEquals(2, outerMembers.size());
+        assertTrue(outerMembers.containsAll(result.getResultWaysOrdered()));
+    }
+
+    @Test
+    void associatedStreetRelationKeepsHouseMembersForAllResultWays() {
+        UndoRedoHandler.getInstance().clean();
+        DataSet dataSet = new DataSet();
+        RectFixture rect = createClosedRectBuilding(dataSet, true);
+        Relation relation = createRelation(dataSet, "associatedStreet", "house", rect.way);
+
+        setSelection(dataSet, rect.way, rect.n1, rect.n3);
+
+        SplitExecutionResult result = service.splitSelectedBuildingDetailed(dataSet);
+        assertTrue(result.isSuccess());
+
+        List<Way> houseMembers = activeWayMembersWithRole(relation, "house");
+        assertEquals(2, houseMembers.size());
+        assertTrue(houseMembers.containsAll(result.getResultWaysOrdered()));
+    }
+
+    @Test
+    void siteRelationKeepsPerimeterMembersForAllResultWays() {
+        UndoRedoHandler.getInstance().clean();
+        DataSet dataSet = new DataSet();
+        RectFixture rect = createClosedRectBuilding(dataSet, true);
+        Relation relation = createRelation(dataSet, "site", "perimeter", rect.way);
+
+        setSelection(dataSet, rect.way, rect.n1, rect.n3);
+
+        SplitExecutionResult result = service.splitSelectedBuildingDetailed(dataSet);
+        assertTrue(result.isSuccess());
+
+        List<Way> perimeterMembers = activeWayMembersWithRole(relation, "perimeter");
+        assertEquals(2, perimeterMembers.size());
+        assertTrue(perimeterMembers.containsAll(result.getResultWaysOrdered()));
+    }
+
+    @Test
+    void undoRedoPreservesSplitAndHousenumberCleanupCommandChain() {
+        UndoRedoHandler.getInstance().clean();
+        DataSet dataSet = new DataSet();
+        RectFixture rect = createClosedRectBuilding(dataSet, true);
+        rect.way.put("addr:housenumber", "10");
+
+        setSelection(dataSet, rect.way, rect.n1, rect.n3);
+
+        SplitExecutionResult result = service.splitSelectedBuildingDetailed(dataSet);
+        assertTrue(result.isSuccess());
+        assertEquals(2, findActiveWays(dataSet).size());
+        assertTrue(result.getResultWaysOrdered().stream().allMatch(way -> !way.hasKey("addr:housenumber")));
+
+        UndoRedoHandler.getInstance().undo();
+        List<Way> activeAfterUndo = findActiveWays(dataSet);
+        assertEquals(1, activeAfterUndo.size());
+        assertEquals(rect.way, activeAfterUndo.get(0));
+        assertEquals("10", rect.way.get("addr:housenumber"));
+
+        UndoRedoHandler.getInstance().redo();
+        List<Way> activeAfterRedo = findActiveWays(dataSet);
+        assertEquals(2, activeAfterRedo.size());
+        assertTrue(activeAfterRedo.stream().allMatch(way -> !way.hasKey("addr:housenumber")));
+    }
+
+    @Test
+    void resultWaysOrderedMatchesActiveBuildingWaysAfterSplit() {
+        UndoRedoHandler.getInstance().clean();
+        DataSet dataSet = new DataSet();
+        RectFixture rect = createClosedRectBuilding(dataSet, true);
+
+        setSelection(dataSet, rect.way, rect.n1, rect.n3);
+
+        SplitExecutionResult result = service.splitSelectedBuildingDetailed(dataSet);
+        assertTrue(result.isSuccess());
+
+        Set<Long> orderedIds = result.getResultWaysOrdered().stream().map(Way::getUniqueId).collect(Collectors.toSet());
+        Set<Long> activeBuildingIds = dataSet.getWays().stream()
+            .filter(way -> !way.isDeleted() && way.hasKey("building"))
+            .map(Way::getUniqueId)
+            .collect(Collectors.toSet());
+
+        assertEquals(activeBuildingIds, orderedIds);
+    }
+
     private Node createNode(DataSet dataSet, double lat, double lon) {
         Node node = new Node(new LatLon(lat, lon));
         dataSet.addPrimitive(node);
@@ -293,6 +393,23 @@ class BuildingSplitServiceTest {
     private List<Way> findActiveWays(DataSet dataSet) {
         return dataSet.getWays().stream()
             .filter(way -> !way.isDeleted())
+            .collect(Collectors.toList());
+    }
+
+    private Relation createRelation(DataSet dataSet, String relationType, String role, Way wayMember) {
+        Relation relation = new Relation();
+        relation.put("type", relationType);
+        relation.addMember(new RelationMember(role, wayMember));
+        dataSet.addPrimitive(relation);
+        return relation;
+    }
+
+    private List<Way> activeWayMembersWithRole(Relation relation, String role) {
+        return relation.getMembers().stream()
+            .filter(RelationMember::isWay)
+            .filter(member -> role.equals(member.getRole()))
+            .map(RelationMember::getWay)
+            .filter(way -> way != null && !way.isDeleted())
             .collect(Collectors.toList());
     }
 
