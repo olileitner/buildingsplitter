@@ -50,7 +50,7 @@ public class SplitBuildingMapMode extends MapMode {
     private static final double CLICK_AMBIGUITY_DELTA_METERS = 0.25;
     private static final double EARTH_RADIUS_METERS = 6_371_000.0;
     private static final String MODE_TOOLTIP = tr("Split mode: drag for line split, click near corner/edge for manual split, click well inside a building for AutoSplit");
-    // TEMP DEBUG: traces external context consume/default resolution in Ctrl AutoSplit flow.
+    // TEMP DEBUG: traces external context consume/default resolution in AutoSplit flow.
     private static final boolean DEBUG_CONTEXT_TRANSFER = false;
     private static final Shortcut SPLIT_BUILDING_SHORTCUT = Shortcut.registerShortcut(
         "mapmode:buildingsplitter:splitbuilding",
@@ -831,7 +831,7 @@ public class SplitBuildingMapMode extends MapMode {
         if (!createdWays.isEmpty()) {
             dataSet.setSelected(createdWays);
         }
-        Logging.info("SplitBuildingMapMode (Ctrl AutoSplit): " + result.getMessage());
+        Logging.info("SplitBuildingMapMode (AutoSplit): " + result.getMessage());
     }
 
     private void debugContext(String message) {
