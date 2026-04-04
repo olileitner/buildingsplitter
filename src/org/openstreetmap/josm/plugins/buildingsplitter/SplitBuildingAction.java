@@ -4,8 +4,6 @@ import static org.openstreetmap.josm.tools.I18n.tr;
 
 import java.awt.event.ActionEvent;
 
-import javax.swing.JOptionPane;
-
 import org.openstreetmap.josm.actions.JosmAction;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.gui.MainApplication;
@@ -37,18 +35,18 @@ public class SplitBuildingAction extends JosmAction {
     public void actionPerformed(ActionEvent e) {
         DataSet dataSet = MainApplication.getLayerManager().getEditDataSet();
         if (dataSet == null) {
-            showError(tr("No editable dataset is available."), JOptionPane.INFORMATION_MESSAGE);
+            showError(tr("No editable dataset is available."), UserNotifier.INFO_MESSAGE);
             return;
         }
 
         if (MainApplication.getMap() == null) {
-            showError(tr("Map view is not available."), JOptionPane.ERROR_MESSAGE);
+            showError(tr("Map view is not available."), UserNotifier.ERROR_MESSAGE);
             return;
         }
 
         SplitBuildingMapMode mapMode = resolveMapModeForActivation();
         if (mapMode == null) {
-            showError(tr("Split Building tool is not initialized yet. Please retry after the map view is ready."), JOptionPane.INFORMATION_MESSAGE);
+            showError(tr("Split Building tool is not initialized yet. Please retry after the map view is ready."), UserNotifier.INFO_MESSAGE);
             return;
         }
         MainApplication.getMap().selectMapMode(mapMode);
@@ -73,11 +71,6 @@ public class SplitBuildingAction extends JosmAction {
 
 
     private void showError(String message, int messageType) {
-        JOptionPane.showMessageDialog(
-            MainApplication.getMainFrame(),
-            message,
-            tr("Split Building"),
-            messageType
-        );
+        UserNotifier.show(tr("Split Building"), message, messageType);
     }
 }

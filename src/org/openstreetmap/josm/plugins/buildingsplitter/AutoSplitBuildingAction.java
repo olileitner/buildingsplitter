@@ -9,8 +9,6 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
-import javax.swing.JOptionPane;
-
 import org.openstreetmap.josm.actions.JosmAction;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Way;
@@ -53,13 +51,13 @@ public class AutoSplitBuildingAction extends JosmAction {
     public void actionPerformed(ActionEvent e) {
         DataSet dataSet = MainApplication.getLayerManager().getEditDataSet();
         if (dataSet == null) {
-            showError(tr("No editable dataset is available."), JOptionPane.INFORMATION_MESSAGE);
+            showError(tr("No editable dataset is available."), UserNotifier.INFO_MESSAGE);
             return;
         }
 
         List<Way> selectedBuildings = collectValidSelectedBuildingWays(dataSet);
         if (selectedBuildings.isEmpty()) {
-            showError(tr("No selected buildings meet AutoSplit requirements."), JOptionPane.INFORMATION_MESSAGE);
+            showError(tr("No selected buildings meet AutoSplit requirements."), UserNotifier.INFO_MESSAGE);
             return;
         }
 
@@ -138,10 +136,11 @@ public class AutoSplitBuildingAction extends JosmAction {
             SplitResult result = previewSession.finalizePreview(dialogResult);
             if (!result.isSuccess()) {
                 previewSession.undoPreview();
-                showError(result.getMessage(), JOptionPane.ERROR_MESSAGE);
-                if (!askContinueAfterFailure()) {
-                    break;
-                }
+                showError(result.getMessage(), UserNotifier.ERROR_MESSAGE);
+                showError(
+                    tr("AutoSplit failed for this building. Continuing with the next selected building."),
+                    UserNotifier.INFO_MESSAGE
+                );
                 continue;
             }
 
@@ -174,24 +173,8 @@ public class AutoSplitBuildingAction extends JosmAction {
         return validWays;
     }
 
-    private boolean askContinueAfterFailure() {
-        int choice = JOptionPane.showConfirmDialog(
-            MainApplication.getMainFrame(),
-            tr("AutoSplit failed for this building. Continue with the next selected building?"),
-            tr("AutoSplit Building"),
-            JOptionPane.YES_NO_OPTION,
-            JOptionPane.QUESTION_MESSAGE
-        );
-        return choice == JOptionPane.YES_OPTION;
-    }
-
     private void showError(String message, int messageType) {
-        JOptionPane.showMessageDialog(
-            MainApplication.getMainFrame(),
-            message,
-            tr("AutoSplit Building"),
-            messageType
-        );
+        UserNotifier.show(tr("AutoSplit Building"), message, messageType);
     }
 
     private void debugContext(String message) {

@@ -17,8 +17,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
-import javax.swing.JOptionPane;
-
 import org.openstreetmap.josm.actions.mapmode.MapMode;
 import org.openstreetmap.josm.command.SequenceCommand;
 import org.openstreetmap.josm.data.UndoRedoHandler;
@@ -1403,12 +1401,7 @@ public class SplitBuildingMapMode extends MapMode {
     }
 
     private void showError(String message) {
-        JOptionPane.showMessageDialog(
-            MainApplication.getMainFrame(),
-            message,
-            tr("Split Building"),
-            JOptionPane.ERROR_MESSAGE
-        );
+        UserNotifier.show(tr("Split Building"), message, UserNotifier.ERROR_MESSAGE);
     }
 
     private static final class SplitCandidate {
