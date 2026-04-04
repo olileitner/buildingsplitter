@@ -8,9 +8,9 @@ import org.openstreetmap.josm.tools.Logging;
  */
 public final class AddressContextBridge {
 
-    public static final String HANDOFF_STREET_KEY = "quickaddressfill.buildingsplitter.handoff.street";
-    public static final String HANDOFF_POSTCODE_KEY = "quickaddressfill.buildingsplitter.handoff.postcode";
-    public static final String HANDOFF_PENDING_KEY = "quickaddressfill.buildingsplitter.handoff.pending";
+    public static final String HANDOFF_STREET_KEY = "housenumberclick.buildingsplitter.handoff.street";
+    public static final String HANDOFF_POSTCODE_KEY = "housenumberclick.buildingsplitter.handoff.postcode";
+    public static final String HANDOFF_PENDING_KEY = "housenumberclick.buildingsplitter.handoff.pending";
 
     private static AddressContext pendingContext;
 
