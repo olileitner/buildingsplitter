@@ -10,9 +10,13 @@ import java.awt.FlowLayout;
 import java.awt.Frame;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
+import java.awt.IllegalComponentStateException;
 import java.awt.Insets;
+import java.awt.Point;
+import java.awt.Rectangle;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -36,7 +40,15 @@ import javax.swing.SwingUtilities;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 
+import org.openstreetmap.josm.data.osm.DataSet;
+import org.openstreetmap.josm.data.osm.Node;
+import org.openstreetmap.josm.data.osm.Way;
+import org.openstreetmap.josm.gui.MainApplication;
+import org.openstreetmap.josm.gui.MapView;
+
 public class AutoSplitOptionsDialog {
+
+    private static final int DIALOG_MARGIN_PX = 16;
 
     @FunctionalInterface
     public interface PreviewChangeListener {
@@ -238,7 +250,7 @@ public class AutoSplitOptionsDialog {
             JComponent.WHEN_IN_FOCUSED_WINDOW
         );
         dialog.pack();
-        dialog.setLocationRelativeTo(parent);
+        positionDialogNearMap(dialog, parent);
 
         updatePreview.run();
 
@@ -517,5 +529,122 @@ public class AutoSplitOptionsDialog {
         buttonPanel.add(skipButton);
         buttonPanel.add(cancelButton);
         return buttonPanel;
+    }
+
+    private void positionDialogNearMap(JDialog dialog, Component parent) {
+        MapView mapView = MainApplication.getMap() == null ? null : MainApplication.getMap().mapView;
+        if (mapView == null || !mapView.isShowing()) {
+            dialog.setLocationRelativeTo(parent);
+            return;
+        }
+
+        Rectangle mapBoundsOnScreen;
+        try {
+            Point mapOrigin = mapView.getLocationOnScreen();
+            mapBoundsOnScreen = new Rectangle(mapOrigin, mapView.getSize());
+        } catch (IllegalComponentStateException ex) {
+            dialog.setLocationRelativeTo(parent);
+            return;
+        }
+
+        Point leftBottom = createAnchoredDialogPoint(dialog, mapBoundsOnScreen, false);
+        Point rightBottom = createAnchoredDialogPoint(dialog, mapBoundsOnScreen, true);
+        Rectangle leftBounds = new Rectangle(leftBottom, dialog.getSize());
+        Rectangle rightBounds = new Rectangle(rightBottom, dialog.getSize());
+
+        List<Rectangle> selectedBuildingBounds = collectSelectedBuildingScreenBounds(mapView, mapBoundsOnScreen);
+        boolean leftOverlapsSelectedBuilding = intersectsAny(leftBounds, selectedBuildingBounds);
+        boolean rightOverlapsSelectedBuilding = intersectsAny(rightBounds, selectedBuildingBounds);
+
+        Point chosen = leftBottom;
+        if (leftOverlapsSelectedBuilding && !rightOverlapsSelectedBuilding) {
+            chosen = rightBottom;
+        }
+        dialog.setLocation(chosen);
+    }
+
+    private Point createAnchoredDialogPoint(JDialog dialog, Rectangle mapBoundsOnScreen, boolean rightAligned) {
+        int rawX = rightAligned
+            ? mapBoundsOnScreen.x + mapBoundsOnScreen.width - dialog.getWidth() - DIALOG_MARGIN_PX
+            : mapBoundsOnScreen.x + DIALOG_MARGIN_PX;
+        int rawY = mapBoundsOnScreen.y + mapBoundsOnScreen.height - dialog.getHeight() - DIALOG_MARGIN_PX;
+
+        int minX = mapBoundsOnScreen.x + DIALOG_MARGIN_PX;
+        int maxX = mapBoundsOnScreen.x + mapBoundsOnScreen.width - dialog.getWidth() - DIALOG_MARGIN_PX;
+        int minY = mapBoundsOnScreen.y + DIALOG_MARGIN_PX;
+        int maxY = mapBoundsOnScreen.y + mapBoundsOnScreen.height - dialog.getHeight() - DIALOG_MARGIN_PX;
+
+        int clampedX = clamp(rawX, minX, maxX);
+        int clampedY = clamp(rawY, minY, maxY);
+        return new Point(clampedX, clampedY);
+    }
+
+    private int clamp(int value, int min, int max) {
+        if (max < min) {
+            return min;
+        }
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private List<Rectangle> collectSelectedBuildingScreenBounds(MapView mapView, Rectangle mapBoundsOnScreen) {
+        DataSet dataSet = MainApplication.getLayerManager().getEditDataSet();
+        if (dataSet == null) {
+            return new ArrayList<>();
+        }
+
+        List<Rectangle> result = new ArrayList<>();
+        for (Way way : dataSet.getSelectedWays()) {
+            if (way == null || way.isDeleted() || !way.hasKey("building")) {
+                continue;
+            }
+
+            Rectangle bounds = computeWayScreenBounds(way, mapView, mapBoundsOnScreen);
+            if (bounds != null) {
+                result.add(bounds);
+            }
+        }
+        return result;
+    }
+
+    private Rectangle computeWayScreenBounds(Way way, MapView mapView, Rectangle mapBoundsOnScreen) {
+        int minX = Integer.MAX_VALUE;
+        int minY = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        boolean foundPoint = false;
+
+        for (Node node : way.getNodes()) {
+            if (node == null || node.getCoor() == null) {
+                continue;
+            }
+            Point p = mapView.getPoint(node);
+            if (p == null) {
+                continue;
+            }
+            int screenX = mapBoundsOnScreen.x + p.x;
+            int screenY = mapBoundsOnScreen.y + p.y;
+            minX = Math.min(minX, screenX);
+            minY = Math.min(minY, screenY);
+            maxX = Math.max(maxX, screenX);
+            maxY = Math.max(maxY, screenY);
+            foundPoint = true;
+        }
+
+        if (!foundPoint) {
+            return null;
+        }
+
+        int width = Math.max(1, maxX - minX);
+        int height = Math.max(1, maxY - minY);
+        return new Rectangle(minX, minY, width, height);
+    }
+
+    private boolean intersectsAny(Rectangle dialogBounds, List<Rectangle> buildingBounds) {
+        for (Rectangle building : buildingBounds) {
+            if (dialogBounds.intersects(building)) {
+                return true;
+            }
+        }
+        return false;
     }
 }
