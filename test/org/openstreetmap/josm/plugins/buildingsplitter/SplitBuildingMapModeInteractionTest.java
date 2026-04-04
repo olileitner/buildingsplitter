@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Field;
@@ -138,6 +139,28 @@ class SplitBuildingMapModeInteractionTest {
         SplitBuildingMapMode mapMode = new SplitBuildingMapMode();
         assertTrue(mapMode.canResolveManualFirstClickForTesting(dataSet, new LatLon(0.000001, 0.000001)));
         assertTrue(mapMode.canResolveManualSecondClickForTesting(building, new LatLon(0.0001, 0.000001)));
+    }
+
+    @Test
+    void hoverNearCornerPreviewsManualFirstSplitPoint() {
+        DataSet dataSet = new DataSet();
+        createBuilding(dataSet, 0.0, 0.0, 0.0002, 0.0002);
+
+        SplitBuildingMapMode mapMode = new SplitBuildingMapMode();
+        Node hoveredNode = mapMode.resolveHoverFirstNodeForTesting(dataSet, new LatLon(0.000001, 0.000001));
+
+        assertNotNull(hoveredNode);
+    }
+
+    @Test
+    void hoverAwayFromCornersDoesNotPreviewManualFirstSplitPoint() {
+        DataSet dataSet = new DataSet();
+        createBuilding(dataSet, 0.0, 0.0, 0.0002, 0.0002);
+
+        SplitBuildingMapMode mapMode = new SplitBuildingMapMode();
+        Node hoveredNode = mapMode.resolveHoverFirstNodeForTesting(dataSet, new LatLon(0.0001, 0.0001));
+
+        assertNull(hoveredNode);
     }
 
     @Test

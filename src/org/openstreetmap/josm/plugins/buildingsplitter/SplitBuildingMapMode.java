@@ -80,6 +80,7 @@ public class SplitBuildingMapMode extends MapMode {
     private List<Node> snapCandidates;
     private Way clickFirstWay;
     private Node clickFirstNode;
+    private Node hoverFirstNode;
     private Node clickSecondPreviewNode;
     private LatLon clickSecondPreviewPoint;
     private boolean snappingEnabled;
@@ -230,8 +231,9 @@ public class SplitBuildingMapMode extends MapMode {
 
     @Override
     public void mouseMoved(MouseEvent e) {
-        if (clickFirstWay == null || dragStart != null) {
-            if (clickSecondPreviewNode != null || clickSecondPreviewPoint != null) {
+        if (dragStart != null) {
+            if (hoverFirstNode != null || clickSecondPreviewNode != null || clickSecondPreviewPoint != null) {
+                hoverFirstNode = null;
                 clickSecondPreviewNode = null;
                 clickSecondPreviewPoint = null;
                 repaintMapView();
@@ -241,7 +243,39 @@ public class SplitBuildingMapMode extends MapMode {
 
         LatLon current = toLatLon(e);
         if (!isValidClickedPoint(current)) {
+            if (hoverFirstNode != null || clickSecondPreviewNode != null || clickSecondPreviewPoint != null) {
+                hoverFirstNode = null;
+                clickSecondPreviewNode = null;
+                clickSecondPreviewPoint = null;
+                repaintMapView();
+            }
             return;
+        }
+
+        DataSet dataSet = MainApplication.getLayerManager().getEditDataSet();
+        if (dataSet == null) {
+            if (hoverFirstNode != null || clickSecondPreviewNode != null || clickSecondPreviewPoint != null) {
+                hoverFirstNode = null;
+                clickSecondPreviewNode = null;
+                clickSecondPreviewPoint = null;
+                repaintMapView();
+            }
+            return;
+        }
+
+        if (clickFirstWay == null || clickFirstNode == null) {
+            Node previousHoverNode = hoverFirstNode;
+            hoverFirstNode = resolveHoverFirstNodeForTesting(dataSet, current);
+            if (previousHoverNode != hoverFirstNode || clickSecondPreviewNode != null || clickSecondPreviewPoint != null) {
+                clickSecondPreviewNode = null;
+                clickSecondPreviewPoint = null;
+                repaintMapView();
+            }
+            return;
+        }
+
+        if (hoverFirstNode != null) {
+            hoverFirstNode = null;
         }
 
         SecondClickResolution previewResolution = resolveSecondClick(clickFirstWay, current, false);
@@ -305,6 +339,7 @@ public class SplitBuildingMapMode extends MapMode {
             }
             clickFirstWay = first.way();
             clickFirstNode = first.node();
+            hoverFirstNode = null;
             clickSecondPreviewNode = null;
             clickSecondPreviewPoint = null;
             return;
@@ -680,6 +715,7 @@ public class SplitBuildingMapMode extends MapMode {
     private void clearClickSelection() {
         clickFirstWay = null;
         clickFirstNode = null;
+        hoverFirstNode = null;
         clickSecondPreviewNode = null;
         clickSecondPreviewPoint = null;
     }
@@ -1149,6 +1185,11 @@ public class SplitBuildingMapMode extends MapMode {
 
     boolean canResolveManualSecondClickForTesting(Way way, LatLon clickPoint) {
         return resolveSecondClick(way, clickPoint, false) != null;
+    }
+
+    Node resolveHoverFirstNodeForTesting(DataSet dataSet, LatLon hoverPoint) {
+        FirstClickSelection candidate = resolveFirstClick(dataSet, hoverPoint, false);
+        return candidate == null ? null : candidate.node();
     }
 
     private void updateSnapFeedback() {
@@ -1659,6 +1700,15 @@ public class SplitBuildingMapMode extends MapMode {
                     g.setColor(new Color(245, 170, 60, 220));
                     g.setStroke(new BasicStroke(3.0f));
                     g.drawOval(firstPoint.x - radius, firstPoint.y - radius, radius * 2, radius * 2);
+                }
+            }
+            if (clickFirstNode == null && hoverFirstNode != null && hoverFirstNode.getCoor() != null) {
+                Point hoverPoint = mapView.getPoint(hoverFirstNode.getCoor());
+                if (hoverPoint != null) {
+                    int radius = 8;
+                    g.setColor(new Color(245, 170, 60, 180));
+                    g.setStroke(new BasicStroke(2.0f));
+                    g.drawOval(hoverPoint.x - radius, hoverPoint.y - radius, radius * 2, radius * 2);
                 }
             }
             if (secondPreview != null) {
