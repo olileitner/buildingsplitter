@@ -25,7 +25,6 @@ import org.openstreetmap.josm.data.coor.EastNorth;
 import org.openstreetmap.josm.data.coor.LatLon;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Node;
-import org.openstreetmap.josm.data.osm.OsmPrimitive;
 import org.openstreetmap.josm.data.osm.Way;
 import org.openstreetmap.josm.data.projection.ProjectionRegistry;
 import org.openstreetmap.josm.gui.MainApplication;
@@ -686,13 +685,7 @@ public class SplitBuildingMapMode extends MapMode {
             return;
         }
 
-        List<OsmPrimitive> splitSelection = new ArrayList<>();
-        splitSelection.add(way);
-        splitSelection.add(firstNode);
-        splitSelection.add(secondNode);
-        dataSet.setSelected(splitSelection);
-
-        SplitExecutionResult result = splitService.splitSelectedBuildingDetailed(dataSet);
+        SplitExecutionResult result = splitService.splitBuildingDetailed(dataSet, way, firstNode, secondNode);
         if (!result.isSuccess()) {
             rollbackToUndoSize(undoStartSize);
             showError(result.getMessage());
@@ -1097,13 +1090,12 @@ public class SplitBuildingMapMode extends MapMode {
             );
         }
 
-        List<OsmPrimitive> splitSelection = new ArrayList<>();
-        splitSelection.add(buildingWay);
-        splitSelection.add(splitNodes.get(0));
-        splitSelection.add(splitNodes.get(1));
-        dataSet.setSelected(splitSelection);
-
-        SplitExecutionResult splitResult = splitService.splitSelectedBuildingDetailed(dataSet);
+        SplitExecutionResult splitResult = splitService.splitBuildingDetailed(
+            dataSet,
+            buildingWay,
+            splitNodes.get(0),
+            splitNodes.get(1)
+        );
         if (!splitResult.isSuccess()) {
             showError(splitResult.getMessage());
             return;
@@ -1435,7 +1427,7 @@ public class SplitBuildingMapMode extends MapMode {
         if (MainApplication.getMap() == null || MainApplication.getMap().mapView == null) {
             return;
         }
-        MainApplication.getMap().mapView.setToolTipText(MODE_TOOLTIP);
+        MainApplication.getMap().mapView.setToolTipText(null);
     }
 
     private void showError(String message) {

@@ -11,6 +11,7 @@ import java.util.Optional;
 
 import org.openstreetmap.josm.command.ChangePropertyCommand;
 import org.openstreetmap.josm.command.Command;
+import org.openstreetmap.josm.command.SelectCommand;
 import org.openstreetmap.josm.command.SequenceCommand;
 import org.openstreetmap.josm.command.SplitWayCommand;
 import org.openstreetmap.josm.data.UndoRedoHandler;
@@ -35,9 +36,16 @@ public class BuildingSplitService {
             return SplitExecutionResult.failure(validation.message(), null);
         }
 
-        Way sourceWay = validation.sourceWay();
-        Node firstSplitNode = validation.firstSplitNode();
-        Node secondSplitNode = validation.secondSplitNode();
+        return splitBuildingDetailed(dataSet, validation.sourceWay(), validation.firstSplitNode(), validation.secondSplitNode());
+    }
+
+    public SplitExecutionResult splitBuildingDetailed(DataSet dataSet, Way sourceWay, Node firstSplitNode, Node secondSplitNode) {
+        if (dataSet == null) {
+            return SplitExecutionResult.failure(tr("No editable dataset is available."), null);
+        }
+        if (sourceWay == null || firstSplitNode == null || secondSplitNode == null) {
+            return SplitExecutionResult.failure(tr("Invalid selection: select exactly 1 closed building way and 2 of its corner nodes (3 selected objects total)."), null);
+        }
 
         RingPaths ringPaths = extractRingPaths(sourceWay, firstSplitNode, secondSplitNode);
         if (ringPaths == null) {
@@ -65,7 +73,7 @@ public class BuildingSplitService {
             Optional<SplitWayCommand> splitCommandOptional = SplitWayCommand.splitWay(
                 sourceWay,
                 splitChunks,
-                dataSet.getSelected(),
+                Arrays.asList(sourceWay, firstSplitNode, secondSplitNode),
                 SplitWayCommand.Strategy.keepFirstChunk(),
                 SplitWayCommand.WhenRelationOrderUncertain.SPLIT_ANYWAY
             );
@@ -84,7 +92,9 @@ public class BuildingSplitService {
         List<Command> commands = new ArrayList<>();
         commands.add(splitCommand);
         if (!resultWaysOrdered.isEmpty()) {
+            List<OsmPrimitive> resultSelection = new ArrayList<>(resultWaysOrdered);
             commands.add(new ChangePropertyCommand(resultWaysOrdered, "addr:housenumber", null));
+            commands.add(new SelectCommand(dataSet, resultSelection));
         }
 
         UndoRedoHandler.getInstance().add(new SequenceCommand(tr("Split building"), commands));

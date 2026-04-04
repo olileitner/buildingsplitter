@@ -238,6 +238,22 @@ class BuildingSplitServiceTest {
     }
 
     @Test
+    void undoAfterExplicitSplitRestoresPreviousSelection() {
+        UndoRedoHandler.getInstance().clean();
+        DataSet dataSet = new DataSet();
+        RectFixture rect = createClosedRectBuilding(dataSet, true);
+        dataSet.clearSelection();
+
+        SplitExecutionResult detailed = service.splitBuildingDetailed(dataSet, rect.way, rect.n1, rect.n3);
+        assertTrue(detailed.isSuccess());
+        assertEquals(2, dataSet.getSelectedWays().size());
+
+        UndoRedoHandler.getInstance().undo();
+
+        assertTrue(dataSet.getSelected().isEmpty());
+    }
+
+    @Test
     void detailedFailureContainsMessageAndEmptyResultWays() {
         UndoRedoHandler.getInstance().clean();
         SplitExecutionResult detailed = service.splitSelectedBuildingDetailed(null);
