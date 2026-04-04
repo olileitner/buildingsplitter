@@ -6,16 +6,22 @@ import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Cursor;
 import java.awt.Graphics2D;
+import java.awt.Image;
 import java.awt.KeyEventDispatcher;
 import java.awt.KeyboardFocusManager;
 import java.awt.Point;
+import java.awt.Toolkit;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
+
+import javax.imageio.ImageIO;
 
 import org.openstreetmap.josm.actions.mapmode.MapMode;
 import org.openstreetmap.josm.command.SequenceCommand;
@@ -42,7 +48,7 @@ public class SplitBuildingMapMode extends MapMode {
     private static final double CLICK_NODE_TOLERANCE_PIXELS = 12.0;
     private static final double CLICK_EDGE_TOLERANCE_PIXELS = 10.0;
     private static final double CLICK_AMBIGUITY_DELTA_PIXELS = 2.0;
-    private static final Cursor MANUAL_CURSOR = Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR);
+    private static final Cursor MANUAL_CURSOR = createManualCursor();
     private static final Cursor AUTOSPLIT_CURSOR = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR);
     private static final double SNAP_FEEDBACK_MAX_LINE_LENGTH_METERS = 1000.0;
     private static final double SNAP_FEEDBACK_CORNER_DISTANCE_METERS = 1.0;
@@ -53,7 +59,6 @@ public class SplitBuildingMapMode extends MapMode {
     private static final double CLICK_AMBIGUITY_DELTA_METERS = 0.25;
     private static final double CONTAINS_BOUNDARY_TOLERANCE_METERS = 0.05;
     private static final double EARTH_RADIUS_METERS = 6_371_000.0;
-    private static final String MODE_TOOLTIP = tr("Split mode: drag for line split, click near corner/edge for manual split, click well inside a building for AutoSplit");
     private static final String AUTOSPLIT_REQUIREMENTS_MESSAGE = tr("No selected buildings meet AutoSplit requirements.");
     // TEMP DEBUG: traces external context consume/default resolution in AutoSplit flow.
     private static final boolean DEBUG_CONTEXT_TRANSFER = false;
@@ -1428,6 +1433,67 @@ public class SplitBuildingMapMode extends MapMode {
             return;
         }
         MainApplication.getMap().mapView.setToolTipText(null);
+    }
+
+    private static Cursor createManualCursor() {
+        Cursor fallback = Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR);
+        Cursor pngCursor = createCursorFromPngResource("/images/cursor/buildingsplitter_scalpel.png", fallback);
+        if (pngCursor != null) {
+            return pngCursor;
+        }
+
+        // Secondary fallback keeps SVG support for environments where it works.
+        try {
+            javax.swing.ImageIcon icon = ImageProvider.get("cursor", "buildingsplitter_scalpel");
+            if (icon == null) {
+                return fallback;
+            }
+
+            Image image = icon.getImage();
+            int width = icon.getIconWidth();
+            int height = icon.getIconHeight();
+            if (image == null || width <= 0 || height <= 0) {
+                return fallback;
+            }
+
+            Point hotspot = new Point(Math.min(10, width - 1), Math.min(28, height - 1));
+            Cursor customCursor = Toolkit.getDefaultToolkit().createCustomCursor(image, hotspot, "buildingsplitter-scalpel");
+            // Some Linux desktop stacks silently return the default arrow for unsupported custom cursors.
+            if (customCursor == null || customCursor.getType() == Cursor.DEFAULT_CURSOR) {
+                return fallback;
+            }
+            return customCursor;
+        } catch (RuntimeException ex) {
+            Logging.debug(ex);
+            return fallback;
+        }
+    }
+
+    private static Cursor createCursorFromPngResource(String resourcePath, Cursor fallback) {
+        try (InputStream input = SplitBuildingMapMode.class.getResourceAsStream(resourcePath)) {
+            if (input == null) {
+                return null;
+            }
+            Image image = ImageIO.read(input);
+            if (image == null) {
+                return null;
+            }
+            int width = image.getWidth(null);
+            int height = image.getHeight(null);
+            if (width <= 0 || height <= 0) {
+                return null;
+            }
+
+            Point hotspot = new Point(Math.min(10, width - 1), Math.min(28, height - 1));
+            Cursor customCursor = Toolkit.getDefaultToolkit().createCustomCursor(image, hotspot, "buildingsplitter-scalpel-png");
+            if (customCursor == null || customCursor.getType() == Cursor.DEFAULT_CURSOR) {
+                return fallback;
+            }
+            return customCursor;
+        } catch (IOException | RuntimeException ex) {
+            Logging.debug(ex);
+            return null;
+        }
     }
 
     private void showError(String message) {
