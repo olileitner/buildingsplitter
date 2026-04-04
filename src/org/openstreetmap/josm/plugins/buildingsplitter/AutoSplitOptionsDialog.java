@@ -11,11 +11,15 @@ import java.awt.Frame;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
+import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
 import javax.swing.JButton;
@@ -154,7 +158,8 @@ public class AutoSplitOptionsDialog {
             streetEditor.getDocument().addDocumentListener(previewUpdateListener);
         }
 
-        JPanel partsPanel = createPartsPanel(selectedParts, updatePreview);
+        PartsPanelState partsPanelState = createPartsPanel(selectedParts, updatePreview);
+        JPanel partsPanel = partsPanelState.panel;
         JButton plusOneButton = createIncrementButton("+1", 1, increment, updatePreview);
         JButton plusTwoButton = createIncrementButton("+2", 2, increment, updatePreview);
         JToggleButton reverseOrderToggle = createReverseToggle(reverseOrder, updatePreview);
@@ -237,7 +242,7 @@ public class AutoSplitOptionsDialog {
 
         updatePreview.run();
 
-        SwingUtilities.invokeLater(houseNumberField::requestFocusInWindow);
+        SwingUtilities.invokeLater(() -> partsPanelState.selectedButton.requestFocusInWindow());
         dialog.setVisible(true);
 
         return result[0];
@@ -297,9 +302,11 @@ public class AutoSplitOptionsDialog {
         return toggle;
     }
 
-    private JPanel createPartsPanel(int[] selectedParts, Runnable updatePreview) {
+    private PartsPanelState createPartsPanel(int[] selectedParts, Runnable updatePreview) {
         JPanel partsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         ButtonGroup partsGroup = new ButtonGroup();
+        Map<Integer, JToggleButton> partButtons = new HashMap<>();
+        JToggleButton selectedButton = null;
 
         for (int value = 2; value <= 8; value++) {
             final int partValue = value;
@@ -310,12 +317,62 @@ public class AutoSplitOptionsDialog {
             });
             if (value == selectedParts[0]) {
                 button.setSelected(true);
+                selectedButton = button;
             }
             partsGroup.add(button);
             partsPanel.add(button);
+            partButtons.put(value, button);
         }
 
-        return partsPanel;
+        if (selectedButton == null) {
+            selectedButton = partButtons.get(2);
+            if (selectedButton != null) {
+                selectedButton.setSelected(true);
+                selectedParts[0] = 2;
+            }
+        }
+
+        bindPartsKeyShortcuts(partsPanel, partButtons, selectedParts, updatePreview);
+        return new PartsPanelState(partsPanel, selectedButton);
+    }
+
+    private void bindPartsKeyShortcuts(
+        JPanel partsPanel,
+        Map<Integer, JToggleButton> partButtons,
+        int[] selectedParts,
+        Runnable updatePreview
+    ) {
+        for (int value = 2; value <= 8; value++) {
+            final int partValue = value;
+            JToggleButton button = partButtons.get(value);
+            if (button == null) {
+                continue;
+            }
+            String actionKey = "select-parts-" + partValue;
+            partsPanel.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_0 + partValue, 0), actionKey);
+            partsPanel.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_NUMPAD0 + partValue, 0), actionKey);
+            partsPanel.getActionMap().put(actionKey, new AbstractAction() {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    selectedParts[0] = partValue;
+                    button.setSelected(true);
+                    button.requestFocusInWindow();
+                    updatePreview.run();
+                }
+            });
+        }
+    }
+
+    private static final class PartsPanelState {
+        private final JPanel panel;
+        private final JToggleButton selectedButton;
+
+        private PartsPanelState(JPanel panel, JToggleButton selectedButton) {
+            this.panel = panel;
+            this.selectedButton = selectedButton;
+        }
     }
 
     private JPanel createFormPanel(

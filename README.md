@@ -10,14 +10,10 @@ JOSM plugin for splitting building ways in practical mapper workflows.
 
 - Manual split by drag line across a building.
 - Manual split by 2-click workflow (corner/edge based).
-- Smart click intent in `Split Building` mode:
-  - click near corner or edge -> manual split logic wins
-  - click clearly inside exactly one building -> AutoSplit dialog opens
-  - ambiguous clicks -> no split, clear feedback message
 - AutoSplit action for selected buildings (for simple 4-corner building ways).
-- Live preview session with safe finalize / cancel behavior.
+- AutoSplit for clicking inside a building (no need to click near boundary).
 - Optional address enrichment in AutoSplit:
-  - `addr:street` (editable, with visible street suggestions)
+  - `addr:street` (editable, with street suggestions)
   - `addr:postcode` (prefilled if uniquely detectable from visible context)
   - optional `addr:housenumber` sequence generation
 
