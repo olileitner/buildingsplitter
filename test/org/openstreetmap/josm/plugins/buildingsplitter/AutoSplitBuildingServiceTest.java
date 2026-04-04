@@ -43,6 +43,19 @@ class AutoSplitBuildingServiceTest {
     }
 
     @Test
+    void autoSplitCandidateValidationAcceptsOnlyFourCornerClosedBuildingWays() {
+        DataSet dataSet = new DataSet();
+        Way valid = createClosedRectBuilding(dataSet, true);
+        Way fiveCorner = createClosedFiveCornerBuilding(dataSet);
+        Way noBuildingTag = createClosedRectBuilding(dataSet, false);
+
+        assertTrue(service.isAutoSplitCandidate(valid));
+        assertFalse(service.isAutoSplitCandidate(fiveCorner));
+        assertFalse(service.isAutoSplitCandidate(noBuildingTag));
+        assertFalse(service.isAutoSplitCandidate(null));
+    }
+
+    @Test
     void nonFourCornerBuildingFails() {
         DataSet dataSet = new DataSet();
         Way building = createClosedFiveCornerBuilding(dataSet);
@@ -189,4 +202,3 @@ class AutoSplitBuildingServiceTest {
         return node;
     }
 }
-

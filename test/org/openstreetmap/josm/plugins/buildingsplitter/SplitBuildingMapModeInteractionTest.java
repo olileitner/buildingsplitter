@@ -1,7 +1,9 @@
 package org.openstreetmap.josm.plugins.buildingsplitter;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Field;
@@ -58,6 +60,20 @@ class SplitBuildingMapModeInteractionTest {
     }
 
     @Test
+    void clickCloseToCornerAroundTwoMetersStillPrefersManualIntent() {
+        DataSet dataSet = new DataSet();
+        createBuilding(dataSet, 0.0, 0.0, 0.0002, 0.0002);
+
+        SplitBuildingMapMode mapMode = new SplitBuildingMapMode();
+        SplitBuildingMapMode.ClickIntentResolution intent = mapMode.resolveClickIntentForTesting(
+            dataSet,
+            new LatLon(0.000012, 0.000012)
+        );
+
+        assertEquals(SplitBuildingMapMode.ClickIntentKind.MANUAL, intent.kind());
+    }
+
+    @Test
     void clickNearEdgePrefersManualIntent() {
         DataSet dataSet = new DataSet();
         createBuilding(dataSet, 0.0, 0.0, 0.0002, 0.0002);
@@ -86,24 +102,32 @@ class SplitBuildingMapModeInteractionTest {
     }
 
     @Test
-    void ambiguousInteriorClickAcrossMultipleBuildingsDoesNotAutoSplit() {
+    void interiorClickOnNonFourCornerBuildingShowsRequirementsAndDoesNotAutoSplit() {
         DataSet dataSet = new DataSet();
-        createBuilding(dataSet, 0.0, 0.0, 0.0002, 0.0002);
-        createBuilding(dataSet, 0.00005, 0.00005, 0.00025, 0.00025);
+        createFiveCornerBuilding(dataSet);
 
         SplitBuildingMapMode mapMode = new SplitBuildingMapMode();
         SplitBuildingMapMode.ClickIntentResolution intent = mapMode.resolveClickIntentForTesting(
             dataSet,
-            new LatLon(0.00012, 0.00012)
+            new LatLon(0.0001, 0.0001)
         );
 
+        assertNotEquals(SplitBuildingMapMode.ClickIntentKind.AUTOSPLIT_INTERIOR, intent.kind());
         assertEquals(SplitBuildingMapMode.ClickIntentKind.AMBIGUOUS, intent.kind());
+        assertNotNull(intent.message());
+        assertEquals("No selected buildings meet AutoSplit requirements.", intent.message());
     }
 
     @Test
-    void dragGestureDetectionStillTreatsDifferentPointsAsDragSplit() {
+    void tinyPointerJitterIsNotTreatedAsDragSplit() {
         SplitBuildingMapMode mapMode = new SplitBuildingMapMode();
-        assertTrue(mapMode.isDragSplitGesture(new LatLon(0.0, 0.0), new LatLon(0.0001, 0.0001)));
+        assertFalse(mapMode.isDragSplitGestureByPixels(new java.awt.Point(100, 100), new java.awt.Point(104, 104)));
+    }
+
+    @Test
+    void dragGestureDetectionStillTreatsClearMovementAsDragSplit() {
+        SplitBuildingMapMode mapMode = new SplitBuildingMapMode();
+        assertTrue(mapMode.isDragSplitGestureByPixels(new java.awt.Point(100, 100), new java.awt.Point(120, 120)));
     }
 
     @Test
@@ -116,6 +140,43 @@ class SplitBuildingMapModeInteractionTest {
         assertTrue(mapMode.canResolveManualSecondClickForTesting(building, new LatLon(0.0001, 0.000001)));
     }
 
+    @Test
+    void interiorClickOnDifferentBuildingReplacesSinglePreviousSelection() {
+        DataSet dataSet = new DataSet();
+        Way selectedButInvalid = createFiveCornerBuilding(dataSet);
+        Way clickedAndValid = createBuilding(dataSet, 0.001, 0.001, 0.0012, 0.0012);
+        dataSet.setSelected(selectedButInvalid);
+
+        SplitBuildingMapMode mapMode = new SplitBuildingMapMode();
+        LatLon clickPoint = new LatLon(0.0011, 0.0011);
+
+        mapMode.normalizeSelectionToClickedBuildingForTesting(dataSet, clickPoint);
+        SplitBuildingMapMode.ClickIntentResolution intent = mapMode.resolveClickIntentForTesting(dataSet, clickPoint);
+
+        assertEquals(1, dataSet.getSelectedWays().size());
+        assertEquals(clickedAndValid, dataSet.getSelectedWays().iterator().next());
+        assertEquals(SplitBuildingMapMode.ClickIntentKind.AUTOSPLIT_INTERIOR, intent.kind());
+    }
+
+    @Test
+    void interiorClickOnDifferentBuildingReplacesMultiplePreviousSelections() {
+        DataSet dataSet = new DataSet();
+        Way selectedA = createBuilding(dataSet, 0.0, 0.0, 0.0002, 0.0002);
+        Way selectedB = createFiveCornerBuilding(dataSet);
+        Way clickedAndValid = createBuilding(dataSet, 0.002, 0.002, 0.0022, 0.0022);
+        dataSet.setSelected(Arrays.asList(selectedA, selectedB));
+
+        SplitBuildingMapMode mapMode = new SplitBuildingMapMode();
+        LatLon clickPoint = new LatLon(0.0021, 0.0021);
+
+        mapMode.normalizeSelectionToClickedBuildingForTesting(dataSet, clickPoint);
+        SplitBuildingMapMode.ClickIntentResolution intent = mapMode.resolveClickIntentForTesting(dataSet, clickPoint);
+
+        assertEquals(1, dataSet.getSelectedWays().size());
+        assertEquals(clickedAndValid, dataSet.getSelectedWays().iterator().next());
+        assertEquals(SplitBuildingMapMode.ClickIntentKind.AUTOSPLIT_INTERIOR, intent.kind());
+    }
+
     private Way createBuilding(DataSet dataSet, double minLat, double minLon, double maxLat, double maxLon) {
         Node n1 = createNode(dataSet, minLat, minLon);
         Node n2 = createNode(dataSet, minLat, maxLon);
@@ -124,6 +185,20 @@ class SplitBuildingMapModeInteractionTest {
 
         Way way = new Way();
         way.setNodes(Arrays.asList(n1, n2, n3, n4, n1));
+        way.put("building", "yes");
+        dataSet.addPrimitive(way);
+        return way;
+    }
+
+    private Way createFiveCornerBuilding(DataSet dataSet) {
+        Node n1 = createNode(dataSet, 0.0, 0.0);
+        Node n2 = createNode(dataSet, 0.0, 0.0002);
+        Node n3 = createNode(dataSet, 0.0001, 0.00025);
+        Node n4 = createNode(dataSet, 0.0002, 0.0002);
+        Node n5 = createNode(dataSet, 0.0002, 0.0);
+
+        Way way = new Way();
+        way.setNodes(Arrays.asList(n1, n2, n3, n4, n5, n1));
         way.put("building", "yes");
         dataSet.addPrimitive(way);
         return way;
@@ -145,4 +220,3 @@ class SplitBuildingMapModeInteractionTest {
         }
     }
 }
-

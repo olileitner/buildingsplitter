@@ -46,11 +46,14 @@ public class AutoSplitBuildingService {
         if (buildingWay.getDataSet() != dataSet) {
             return SplitResult.failure(tr("Selected building is not part of the current editable dataset."));
         }
-        if (!buildingWay.isClosed()) {
-            return SplitResult.failure(tr("The selected way must be closed."));
-        }
-        if (!buildingWay.hasKey("building")) {
-            return SplitResult.failure(tr("The selected way must have a building=* tag."));
+        if (!isAutoSplitCandidate(buildingWay)) {
+            if (!buildingWay.isClosed()) {
+                return SplitResult.failure(tr("The selected way must be closed."));
+            }
+            if (!buildingWay.hasKey("building")) {
+                return SplitResult.failure(tr("The selected way must have a building=* tag."));
+            }
+            return SplitResult.failure(tr("AutoSplit currently supports only 4-corner buildings."));
         }
 
         List<Node> corners = extractFourCorners(buildingWay);
@@ -518,6 +521,14 @@ public class AutoSplitBuildingService {
             return ProjectionRegistry.getProjection().eastNorth2latlon(eastNorth);
         }
         return new LatLon(eastNorth.north(), eastNorth.east());
+    }
+
+    boolean isAutoSplitCandidate(Way way) {
+        return way != null
+            && !way.isDeleted()
+            && way.isClosed()
+            && way.hasKey("building")
+            && extractFourCorners(way) != null;
     }
 
     private static final class SplitGeometry {

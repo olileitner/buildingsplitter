@@ -13,7 +13,6 @@ import javax.swing.JOptionPane;
 
 import org.openstreetmap.josm.actions.JosmAction;
 import org.openstreetmap.josm.data.osm.DataSet;
-import org.openstreetmap.josm.data.osm.Node;
 import org.openstreetmap.josm.data.osm.Way;
 import org.openstreetmap.josm.gui.MainApplication;
 import org.openstreetmap.josm.tools.ImageProvider;
@@ -166,45 +165,13 @@ public class AutoSplitBuildingAction extends JosmAction {
         List<Way> validWays = new ArrayList<>();
         Collection<Way> selectedWays = dataSet.getSelectedWays();
         for (Way way : selectedWays) {
-            if (isValidAutoSplitCandidate(way)) {
+            if (autoSplitService.isAutoSplitCandidate(way)) {
                 validWays.add(way);
             }
         }
 
         validWays.sort(Comparator.comparingLong(Way::getUniqueId));
         return validWays;
-    }
-
-    private boolean isValidAutoSplitCandidate(Way way) {
-        if (way == null || way.isDeleted() || !way.isClosed() || !way.hasKey("building")) {
-            return false;
-        }
-
-        return hasExactlyFourDistinctCorners(way);
-    }
-
-    private boolean hasExactlyFourDistinctCorners(Way way) {
-        List<Node> nodes = new ArrayList<>(way.getNodes());
-        if (nodes.size() != 5) {
-            return false;
-        }
-
-        if (!nodes.get(0).equals(nodes.get(nodes.size() - 1))) {
-            return false;
-        }
-
-        List<Node> corners = new ArrayList<>(nodes.subList(0, 4));
-        if (corners.stream().distinct().count() != 4) {
-            return false;
-        }
-
-        for (Node corner : corners) {
-            if (corner.getCoor() == null) {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     private boolean askContinueAfterFailure() {

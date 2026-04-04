@@ -40,16 +40,24 @@ import org.openstreetmap.josm.tools.Shortcut;
 public class SplitBuildingMapMode extends MapMode {
 
     private static final double CLICK_EPSILON = 1e-9;
+    // Small hand jitter should still count as click; require a clearer movement for drag split.
+    private static final double MIN_DRAG_SPLIT_DISTANCE_PIXELS = 7.0;
+    private static final double CLICK_NODE_TOLERANCE_PIXELS = 12.0;
+    private static final double CLICK_EDGE_TOLERANCE_PIXELS = 10.0;
+    private static final double CLICK_AMBIGUITY_DELTA_PIXELS = 2.0;
     private static final Cursor MANUAL_CURSOR = Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR);
     private static final Cursor AUTOSPLIT_CURSOR = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR);
     private static final double SNAP_FEEDBACK_MAX_LINE_LENGTH_METERS = 1000.0;
     private static final double SNAP_FEEDBACK_CORNER_DISTANCE_METERS = 1.0;
-    private static final double CLICK_NODE_TOLERANCE_METERS = 1.5;
+    // Meter-based fallback for tests/headless paths where no MapView pixel coordinates exist.
+    private static final double CLICK_NODE_TOLERANCE_METERS = 2.5;
     private static final double CLICK_EDGE_TOLERANCE_METERS = 1.5;
     private static final double AUTOSPLIT_INTERIOR_MARGIN_METERS = 3.0;
     private static final double CLICK_AMBIGUITY_DELTA_METERS = 0.25;
+    private static final double CONTAINS_BOUNDARY_TOLERANCE_METERS = 0.05;
     private static final double EARTH_RADIUS_METERS = 6_371_000.0;
     private static final String MODE_TOOLTIP = tr("Split mode: drag for line split, click near corner/edge for manual split, click well inside a building for AutoSplit");
+    private static final String AUTOSPLIT_REQUIREMENTS_MESSAGE = tr("No selected buildings meet AutoSplit requirements.");
     // TEMP DEBUG: traces external context consume/default resolution in AutoSplit flow.
     private static final boolean DEBUG_CONTEXT_TRANSFER = false;
     private static final Shortcut SPLIT_BUILDING_SHORTCUT = Shortcut.registerShortcut(
@@ -70,6 +78,7 @@ public class SplitBuildingMapMode extends MapMode {
 
     private LatLon dragStart;
     private LatLon dragCurrent;
+    private Point dragStartScreenPoint;
     private List<Node> snapCandidates;
     private Way clickFirstWay;
     private Node clickFirstNode;
@@ -156,6 +165,7 @@ public class SplitBuildingMapMode extends MapMode {
 
         dragStart = start;
         dragCurrent = start;
+        dragStartScreenPoint = e.getPoint();
         snappingEnabled = true;
         snapCandidates.clear();
         repaintMapView();
@@ -208,7 +218,7 @@ public class SplitBuildingMapMode extends MapMode {
         }
 
         dragCurrent = releasePoint;
-        if (!isDragSplitGesture(dragStart, dragCurrent)) {
+        if (!isDragSplitGestureByPixels(dragStartScreenPoint, e.getPoint())) {
             handleClickWithoutDrag(dataSet, releasePoint);
             resetDragState();
             repaintMapView();
@@ -248,6 +258,8 @@ public class SplitBuildingMapMode extends MapMode {
             return;
         }
 
+        normalizeSelectionToClickedBuilding(dataSet, clickPoint);
+
         ClickIntentResolution intent = resolveClickIntent(dataSet, clickPoint);
         if (intent.kind() == ClickIntentKind.MANUAL) {
             handleManualClickSelection(dataSet, clickPoint);
@@ -265,6 +277,26 @@ public class SplitBuildingMapMode extends MapMode {
         }
 
         showError(tr("Click near a building corner/edge for manual split, or clearly inside one building for AutoSplit."));
+    }
+
+    private void normalizeSelectionToClickedBuilding(DataSet dataSet, LatLon clickPoint) {
+        Way clickedBuilding = findSingleClickedBuilding(dataSet, clickPoint, false);
+        if (clickedBuilding == null) {
+            return;
+        }
+
+        List<Way> selectedWays = new ArrayList<>(dataSet.getSelectedWays());
+        if (selectedWays.size() == 1 && clickedBuilding.equals(selectedWays.get(0))) {
+            return;
+        }
+
+        if (!selectedWays.isEmpty()) {
+            dataSet.setSelected(Collections.singleton(clickedBuilding));
+        }
+    }
+
+    void normalizeSelectionToClickedBuildingForTesting(DataSet dataSet, LatLon clickPoint) {
+        normalizeSelectionToClickedBuilding(dataSet, clickPoint);
     }
 
     private void handleManualClickSelection(DataSet dataSet, LatLon clickPoint) {
@@ -295,6 +327,7 @@ public class SplitBuildingMapMode extends MapMode {
 
     private FirstClickSelection resolveFirstClick(DataSet dataSet, LatLon clickPoint, boolean showErrors) {
         List<FirstClickSelection> candidates = findFirstClickCandidates(dataSet, clickPoint);
+        boolean usingPixelTolerance = canUsePixelClickDistances(clickPoint);
 
         if (candidates.isEmpty()) {
             if (showErrors) {
@@ -308,7 +341,12 @@ public class SplitBuildingMapMode extends MapMode {
             .thenComparingLong(selection -> selection.way().getUniqueId())
             .thenComparingLong(selection -> selection.node().getUniqueId()));
 
-        if (isAmbiguousByDistance(candidates.get(0).distance(), candidates, FirstClickSelection::distance)) {
+        if (isAmbiguousByDistance(
+            candidates.get(0).distance(),
+            candidates,
+            FirstClickSelection::distance,
+            usingPixelTolerance ? CLICK_AMBIGUITY_DELTA_PIXELS : CLICK_AMBIGUITY_DELTA_METERS
+        )) {
             if (showErrors) {
                 showError(tr("First click is ambiguous. Please click closer to one building corner."));
             }
@@ -320,6 +358,8 @@ public class SplitBuildingMapMode extends MapMode {
 
     private List<FirstClickSelection> findFirstClickCandidates(DataSet dataSet, LatLon clickPoint) {
         List<FirstClickSelection> candidates = new ArrayList<>();
+        boolean usingPixelTolerance = canUsePixelClickDistances(clickPoint);
+        Point clickPointPixel = usingPixelTolerance ? requireMapView().getPoint(clickPoint) : null;
 
         for (Way way : dataSet.getWays()) {
             if (way == null || way.isDeleted() || !way.isClosed() || !way.hasKey("building")) {
@@ -335,8 +375,20 @@ public class SplitBuildingMapMode extends MapMode {
                 if (node.getCoor() == null) {
                     continue;
                 }
-                double distance = distanceMeters(node.getCoor(), clickPoint);
-                if (distance <= CLICK_NODE_TOLERANCE_METERS) {
+                double distance;
+                boolean withinTolerance;
+                if (usingPixelTolerance && clickPointPixel != null) {
+                    Point nodePoint = requireMapView().getPoint(node.getCoor());
+                    if (nodePoint == null) {
+                        continue;
+                    }
+                    distance = clickPointPixel.distance(nodePoint);
+                    withinTolerance = distance <= CLICK_NODE_TOLERANCE_PIXELS;
+                } else {
+                    distance = distanceMeters(node.getCoor(), clickPoint);
+                    withinTolerance = distance <= CLICK_NODE_TOLERANCE_METERS;
+                }
+                if (withinTolerance) {
                     candidates.add(new FirstClickSelection(way, node, distance));
                 }
             }
@@ -356,6 +408,7 @@ public class SplitBuildingMapMode extends MapMode {
         }
 
         List<SegmentCandidate> segments = findSegmentCandidates(way, clickPoint);
+        boolean usingPixelTolerance = canUsePixelClickDistances(clickPoint);
         if (segments.isEmpty()) {
             if (showErrors) {
                 showError(tr("Second click must be near a corner node or an edge of the same building."));
@@ -367,7 +420,12 @@ public class SplitBuildingMapMode extends MapMode {
             .comparingDouble(SegmentCandidate::distance)
             .thenComparingInt(SegmentCandidate::segmentIndex));
 
-        if (isAmbiguousByDistance(segments.get(0).distance(), segments, SegmentCandidate::distance)) {
+        if (isAmbiguousByDistance(
+            segments.get(0).distance(),
+            segments,
+            SegmentCandidate::distance,
+            usingPixelTolerance ? CLICK_AMBIGUITY_DELTA_PIXELS : CLICK_AMBIGUITY_DELTA_METERS
+        )) {
             if (showErrors) {
                 showError(tr("Second click is ambiguous. Please click closer to a single edge."));
             }
@@ -395,14 +453,29 @@ public class SplitBuildingMapMode extends MapMode {
             ringNodes.remove(ringNodes.size() - 1);
         }
 
+        boolean usingPixelTolerance = canUsePixelClickDistances(clickPoint);
+        Point clickPointPixel = usingPixelTolerance ? requireMapView().getPoint(clickPoint) : null;
+
         Node nearest = null;
         double nearestDistance = Double.POSITIVE_INFINITY;
         for (Node node : ringNodes) {
             if (node.getCoor() == null) {
                 continue;
             }
-            double distance = distanceMeters(node.getCoor(), clickPoint);
-            if (distance <= toleranceMeters && distance < nearestDistance) {
+            double distance;
+            boolean withinTolerance;
+            if (usingPixelTolerance && clickPointPixel != null) {
+                Point nodePoint = requireMapView().getPoint(node.getCoor());
+                if (nodePoint == null) {
+                    continue;
+                }
+                distance = clickPointPixel.distance(nodePoint);
+                withinTolerance = distance <= CLICK_NODE_TOLERANCE_PIXELS;
+            } else {
+                distance = distanceMeters(node.getCoor(), clickPoint);
+                withinTolerance = distance <= toleranceMeters;
+            }
+            if (withinTolerance && distance < nearestDistance) {
                 nearest = node;
                 nearestDistance = distance;
             }
@@ -416,6 +489,9 @@ public class SplitBuildingMapMode extends MapMode {
             ringNodes.remove(ringNodes.size() - 1);
         }
 
+        boolean usingPixelTolerance = canUsePixelClickDistances(clickPoint);
+        Point clickPointPixel = usingPixelTolerance ? requireMapView().getPoint(clickPoint) : null;
+
         List<SegmentCandidate> candidates = new ArrayList<>();
         for (int i = 0; i < ringNodes.size(); i++) {
             Node start = ringNodes.get(i);
@@ -425,18 +501,51 @@ public class SplitBuildingMapMode extends MapMode {
             }
 
             SegmentProjection projection = projectPointToSegment(clickPoint, start.getCoor(), end.getCoor());
-            if (projection == null || projection.distanceMeters() > CLICK_EDGE_TOLERANCE_METERS) {
+            if (projection == null) {
                 continue;
             }
 
+            double distance;
             Node endpoint = null;
-            if (distanceMeters(projection.projectedPoint(), start.getCoor()) <= CLICK_NODE_TOLERANCE_METERS) {
-                endpoint = start;
-            } else if (distanceMeters(projection.projectedPoint(), end.getCoor()) <= CLICK_NODE_TOLERANCE_METERS) {
-                endpoint = end;
+            if (usingPixelTolerance && clickPointPixel != null) {
+                Point startPoint = requireMapView().getPoint(start.getCoor());
+                Point endPoint = requireMapView().getPoint(end.getCoor());
+                if (startPoint == null || endPoint == null) {
+                    continue;
+                }
+                distance = pointToSegmentDistance(
+                    clickPointPixel.x,
+                    clickPointPixel.y,
+                    startPoint.x,
+                    startPoint.y,
+                    endPoint.x,
+                    endPoint.y
+                );
+                if (distance > CLICK_EDGE_TOLERANCE_PIXELS) {
+                    continue;
+                }
+
+                Point projectedPoint = requireMapView().getPoint(projection.projectedPoint());
+                if (projectedPoint != null) {
+                    if (projectedPoint.distance(startPoint) <= CLICK_NODE_TOLERANCE_PIXELS) {
+                        endpoint = start;
+                    } else if (projectedPoint.distance(endPoint) <= CLICK_NODE_TOLERANCE_PIXELS) {
+                        endpoint = end;
+                    }
+                }
+            } else {
+                distance = projection.distanceMeters();
+                if (distance > CLICK_EDGE_TOLERANCE_METERS) {
+                    continue;
+                }
+                if (distanceMeters(projection.projectedPoint(), start.getCoor()) <= CLICK_NODE_TOLERANCE_METERS) {
+                    endpoint = start;
+                } else if (distanceMeters(projection.projectedPoint(), end.getCoor()) <= CLICK_NODE_TOLERANCE_METERS) {
+                    endpoint = end;
+                }
             }
 
-            candidates.add(new SegmentCandidate(i, projection.projectedPoint(), projection.distanceMeters(), endpoint));
+            candidates.add(new SegmentCandidate(i, projection.projectedPoint(), distance, endpoint));
         }
         return candidates;
     }
@@ -577,12 +686,17 @@ public class SplitBuildingMapMode extends MapMode {
         clickSecondPreviewPoint = null;
     }
 
-    private <T> boolean isAmbiguousByDistance(double bestDistance, List<T> candidates, java.util.function.ToDoubleFunction<T> distanceFn) {
+    private <T> boolean isAmbiguousByDistance(
+        double bestDistance,
+        List<T> candidates,
+        java.util.function.ToDoubleFunction<T> distanceFn,
+        double ambiguityDelta
+    ) {
         if (candidates.size() < 2) {
             return false;
         }
         double secondDistance = distanceFn.applyAsDouble(candidates.get(1));
-        return Math.abs(secondDistance - bestDistance) <= CLICK_AMBIGUITY_DELTA_METERS;
+        return Math.abs(secondDistance - bestDistance) <= ambiguityDelta;
     }
 
     private Way findSingleClickedBuilding(DataSet dataSet, LatLon clickPoint, boolean showErrors) {
@@ -628,30 +742,57 @@ public class SplitBuildingMapMode extends MapMode {
             return false;
         }
 
-        double testX = point.lon();
-        double testY = point.lat();
-        boolean inside = false;
+        List<XY> ring = new ArrayList<>();
+        XY testPoint;
 
-        int j = nodes.size() - 1;
-        for (int i = 0; i < nodes.size(); i++) {
-            Node current = nodes.get(i);
-            Node previous = nodes.get(j);
-            if (current.getCoor() == null || previous.getCoor() == null) {
-                j = i;
-                continue;
+        if (ProjectionRegistry.getProjection() != null) {
+            EastNorth testEn = ProjectionRegistry.getProjection().latlon2eastNorth(point);
+            if (testEn == null) {
+                return false;
             }
+            testPoint = new XY(testEn.east(), testEn.north());
+            for (Node node : nodes) {
+                if (node.getCoor() == null) {
+                    return false;
+                }
+                EastNorth en = ProjectionRegistry.getProjection().latlon2eastNorth(node.getCoor());
+                if (en == null) {
+                    return false;
+                }
+                ring.add(new XY(en.east(), en.north()));
+            }
+        } else {
+            double referenceLatRad = Math.toRadians(point.lat());
+            testPoint = toLocalMeters(point, referenceLatRad);
+            for (Node node : nodes) {
+                if (node.getCoor() == null) {
+                    return false;
+                }
+                ring.add(toLocalMeters(node.getCoor(), referenceLatRad));
+            }
+        }
 
-            double xi = current.lon();
-            double yi = current.lat();
-            double xj = previous.lon();
-            double yj = previous.lat();
+        if (ring.size() < 3) {
+            return false;
+        }
 
-            boolean intersects = ((yi > testY) != (yj > testY))
-                && (testX < ((xj - xi) * (testY - yi) / (yj - yi + CLICK_EPSILON)) + xi);
+        // Treat clicks directly on the boundary as inside so downstream margin checks can classify them.
+        for (int i = 0, j = ring.size() - 1; i < ring.size(); j = i++) {
+            if (pointToSegmentDistance(testPoint.x, testPoint.y, ring.get(j).x, ring.get(j).y, ring.get(i).x, ring.get(i).y)
+                <= CONTAINS_BOUNDARY_TOLERANCE_METERS) {
+                return true;
+            }
+        }
+
+        boolean inside = false;
+        for (int i = 0, j = ring.size() - 1; i < ring.size(); j = i++) {
+            XY current = ring.get(i);
+            XY previous = ring.get(j);
+            boolean intersects = ((current.y > testPoint.y) != (previous.y > testPoint.y))
+                && (testPoint.x < ((previous.x - current.x) * (testPoint.y - current.y) / (previous.y - current.y)) + current.x);
             if (intersects) {
                 inside = !inside;
             }
-            j = i;
         }
 
         return inside;
@@ -659,8 +800,14 @@ public class SplitBuildingMapMode extends MapMode {
 
     private ClickIntentResolution resolveClickIntent(DataSet dataSet, LatLon clickPoint) {
         List<FirstClickSelection> firstClickCandidates = findFirstClickCandidates(dataSet, clickPoint);
+        boolean usingPixelTolerance = canUsePixelClickDistances(clickPoint);
         if (!firstClickCandidates.isEmpty()) {
-            if (isAmbiguousByDistance(firstClickCandidates.get(0).distance(), firstClickCandidates, FirstClickSelection::distance)) {
+            if (isAmbiguousByDistance(
+                firstClickCandidates.get(0).distance(),
+                firstClickCandidates,
+                FirstClickSelection::distance,
+                usingPixelTolerance ? CLICK_AMBIGUITY_DELTA_PIXELS : CLICK_AMBIGUITY_DELTA_METERS
+            )) {
                 return ClickIntentResolution.ambiguous(
                     tr("Click is ambiguous near multiple corner nodes. Please click closer to one corner.")
                 );
@@ -670,7 +817,12 @@ public class SplitBuildingMapMode extends MapMode {
 
         List<EdgeManualCandidate> edgeCandidates = findManualEdgeCandidates(dataSet, clickPoint);
         if (!edgeCandidates.isEmpty()) {
-            if (isAmbiguousByDistance(edgeCandidates.get(0).distance(), edgeCandidates, EdgeManualCandidate::distance)) {
+            if (isAmbiguousByDistance(
+                edgeCandidates.get(0).distance(),
+                edgeCandidates,
+                EdgeManualCandidate::distance,
+                usingPixelTolerance ? CLICK_AMBIGUITY_DELTA_PIXELS : CLICK_AMBIGUITY_DELTA_METERS
+            )) {
                 return ClickIntentResolution.ambiguous(
                     tr("Click is ambiguous near multiple building edges. Please click closer to one edge.")
                 );
@@ -697,7 +849,26 @@ public class SplitBuildingMapMode extends MapMode {
             );
         }
 
+        if (!autoSplitService.isAutoSplitCandidate(clickedBuilding)) {
+            return ClickIntentResolution.ambiguous(AUTOSPLIT_REQUIREMENTS_MESSAGE);
+        }
+
         return ClickIntentResolution.autoSplit(clickedBuilding);
+    }
+
+    private MapView requireMapView() {
+        if (MainApplication.getMap() == null) {
+            return null;
+        }
+        return MainApplication.getMap().mapView;
+    }
+
+    private boolean canUsePixelClickDistances(LatLon clickPoint) {
+        MapView mapView = requireMapView();
+        return mapView != null
+            && clickPoint != null
+            && clickPoint.isValid()
+            && mapView.getPoint(clickPoint) != null;
     }
 
     private List<Way> findContainingBuildings(DataSet dataSet, LatLon clickPoint) {
@@ -963,8 +1134,11 @@ public class SplitBuildingMapMode extends MapMode {
             && Math.abs(first.lon() - second.lon()) <= CLICK_EPSILON;
     }
 
-    boolean isDragSplitGesture(LatLon pressPoint, LatLon releasePoint) {
-        return pressPoint != null && releasePoint != null && !isSamePoint(pressPoint, releasePoint);
+    boolean isDragSplitGestureByPixels(Point pressPoint, Point releasePoint) {
+        if (pressPoint == null || releasePoint == null) {
+            return false;
+        }
+        return pressPoint.distance(releasePoint) > MIN_DRAG_SPLIT_DISTANCE_PIXELS;
     }
 
     ClickIntentResolution resolveClickIntentForTesting(DataSet dataSet, LatLon clickPoint) {
@@ -1156,6 +1330,7 @@ public class SplitBuildingMapMode extends MapMode {
     private void resetDragState() {
         dragStart = null;
         dragCurrent = null;
+        dragStartScreenPoint = null;
         snapCandidates.clear();
         snappingEnabled = false;
     }
