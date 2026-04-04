@@ -1381,9 +1381,6 @@ public class SplitBuildingMapMode extends MapMode {
     private void handleEscapePressed() {
         resetState();
         repaintMapView();
-        if (MainApplication.getMap() != null) {
-            MainApplication.getMap().selectSelectTool(false);
-        }
     }
 
     private void updateMapCursor() {
